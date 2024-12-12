@@ -1,4 +1,4 @@
-﻿#requires -Module dbatools
+#requires -Module dbatools
 
 # Parameters
 
@@ -15,6 +15,7 @@ If ($server -eq $True) {
 }
 
 $ReportVersion = '1.0'
+$Script:Index = 1
 
 $header = @"
 <style>
@@ -113,14 +114,26 @@ WHERE
 	[type_desc] = 'LOG';
 "@
 
-#The command below will get the name of the computer
+#The command below will get the name of the computer. If a value was passed in for the -Server parameter, then that value will be used instead.
 if ($Server -eq $True) {
     $ComputerName = "<h1>Computer Name: $Server</h1>"
 } else {
     $ComputerName = "<h1>Computer Name: $env:computername</h1>"
 }
 
-$ComputerName = "<h1>Computer Name: $env:computername</h1>"
+if ($Instance -eq $null) {
+    Write-Error "There are no SQL Server instances on this host. Please try running this against a with a SQL Server instance." -ErrorAction Stop
+}
+
+#The command below gathers some basic details about the host server
+$HostServerProperties = @(
+    (Get-DbaInstanceProperty -SqlInstance $Instance | Select-Object Name, Value | Where-Object {$_.Name -eq "FullyQualifiedNetName"}),
+    (Get-DbaInstanceProperty -SqlInstance $Instance | Select-Object Name, Value | Where-Object {$_.Name -eq "HostDistribution"}),
+    (Get-DbaInstanceProperty -SqlInstance $Instance | Select-Object Name, Value | Where-Object {$_.Name -eq "HostRelease"})
+    (Get-DbaInstanceProperty -SqlInstance $Instance | Select-Object Name, Value | Where-Object {$_.Name -eq "OSVersion"}),
+    (Get-DbaInstanceProperty -SqlInstance $Instance | Select-Object Name, Value | Where-Object {$_.Name -eq "PhysicalMemory"})
+    (Get-DbaInstanceProperty -SqlInstance $Instance | Select-Object Name, Value | Where-Object {$_.Name -eq "Processors"})
+) | ConvertTo-Html ID, Name, Value -Fragment -PreContent "<h2>Host Server Properties</h2>"
 
 #The command below will get the Operating System information, convert the result to HTML code as table and store it to a variable
 $OSinfo = Get-CimInstance -Class Win32_OperatingSystem | ConvertTo-Html -As List -Property Version,Caption,BuildNumber,Manufacturer -Fragment -PreContent "<h2>Operating System Information</h2>"
@@ -152,16 +165,32 @@ $ServicesInfo = Get-DbaService | ConvertTo-Html -Property `
 $ServicesInfo = $ServicesInfo -replace '<td>Running</td>','<td class="RunningStatus">Running</td>' 
 $ServicesInfo = $ServicesInfo -replace '<td>Stopped</td>','<td class="StopStatus">Stopped</td>'
 
+#The command below will get instance-level properties of most interest, convert the result to HTML code as table and store it to a variable
+$InstanceProperties = @(
+    (Get-DbaInstanceProperty -SqlInstance $Instance | Select-Object Name, Value | Where-Object {$_.Name -eq "Edition"}),
+    (Get-DbaInstanceProperty -SqlInstance $Instance | Select-Object Name, Value | Where-Object {$_.Name -eq "VersionString"}),
+    (Get-DbaInstanceProperty -SqlInstance $Instance | Select-Object Name, Value | Where-Object {$_.Name -eq "Collation"})
+    (Get-DbaInstanceProperty -SqlInstance $Instance | Select-Object Name, Value | Where-Object {$_.Name -eq "IsFullTextInstalled"}),
+    (Get-DbaInstanceProperty -SqlInstance $Instance | Select-Object Name, Value | Where-Object {$_.Name -eq "RootDirectory"})
+    (Get-DbaInstanceProperty -SqlInstance $Instance | Select-Object Name, Value | Where-Object {$_.Name -eq "MasterDBPath"}),
+    (Get-DbaInstanceProperty -SqlInstance $Instance | Select-Object Name, Value | Where-Object {$_.Name -eq "MasterDBLogPath"}),
+    (Get-DbaInstanceProperty -SqlInstance $Instance | Select-Object Name, Value | Where-Object {$_.Name -eq "DefaultLog"})
+    (Get-DbaInstanceProperty -SqlInstance $Instance | Select-Object Name, Value | Where-Object {$_.Name -eq "BackupDirectory"}),
+    (Get-DbaInstanceProperty -SqlInstance $Instance | Select-Object Name, Value | Where-Object {$_.Name -eq "LoginMode"})
+) | ConvertTo-Html ID, Name, Value -Fragment -PreContent "<h2>SQL Server Instance Properties</h2>"
+
+#The command below will details of the system databases' data files, convert the result to HTML code as table and store it to a variable
 $SystemDataFiles = Invoke-DbaQuery -SqlInstance $Instance -Query $QuerySystemDataFiles | ConvertTo-Html -Property `
     Database, Type, "Logical Name", "Physical Name", "Initial Size (MB)", Growth `
     -Fragment -PreContent "<h2>System Data Files</h2>"
 
+#The command below will details of the system databases' data files, convert the result to HTML code as table and store it to a variable
 $SystemLogFiles = Invoke-DbaQuery -SqlInstance $Instance -Query $QuerySystemDataFiles | ConvertTo-Html -Property `
     Database, Type, "Logical Name", "Physical Name", "Initial Size (MB)", Growth `
     -Fragment -PreContent "<h2>System Log Files</h2>"
   
 #The command below will combine all the information gathered into a single HTML report
-$Report = ConvertTo-HTML -Body "$ComputerName $OSinfo $ProcessInfo $BiosInfo $DiskInfo $ServicesInfo $SystemDataFiles $SystemLogFiles" `
+$Report = ConvertTo-HTML -Body "$ComputerName $HostServerProperties $OSinfo $ProcessInfo $BiosInfo $DiskInfo $ServicesInfo $InstanceProperties $SystemDataFiles $SystemLogFiles" `
     -Title "Computer Information" -Head $header -PostContent "<p id='CreationDate'>Creation Date: $(Get-Date); Report Version: $ReportVersion;<p>"
 
 #The command below will generate the report to an HTML file
