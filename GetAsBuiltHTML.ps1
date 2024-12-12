@@ -137,8 +137,8 @@ $DiskInfo = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=3" |
     @{Label="Drive Type"; Expression = {$_.DriveType}},
     @{Label="Provider Name"; Expression = {$_.ProviderName}},
     @{Label="Volume Name"; Expression = {$_.VolumeName}},
-    @{Label="Size"; Expression = {$_.Size}},
-    @{Label="Free Space"; Expression = {$_.FreeSpace}} `
+    @{Label="Size"; Expression = {$_.Size/1GB}},
+    @{Label="Free Space"; Expression = {$_.FreeSpace/1GB}} `
     -Fragment -PreContent "<h2>Disk Information</h2>"
 
 #The command below will get first 10 services information, convert the result to HTML code as table and store it to a variable
