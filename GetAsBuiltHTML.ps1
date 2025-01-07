@@ -14,7 +14,6 @@ If ($server -eq $True) {
     $Instance = Find-DbaInstance -ComputerName $ENV:computername
 }
 
-$ReportVersion = '1.0'
 $Script:Index = 1
 
 $header = @"
