@@ -35,8 +35,9 @@ param (
     [Parameter(Mandatory=$true)]
     [string[]]$SQLServerInstances,
     [string]$OutputPath = "$env:USERPROFILE\Documents\AsBuiltDocs",
-    [string]$DocumentFormat = "markdown",
-    [string]$ScriptEventLogPath = "$env:USERPROFILE\Documents\AsBuiltDocsLogs"
+    [string]$ScriptEventLogPath = "$($OutputPath)\Logs",
+    [string]$DocumentFormat = "markdown"
+
 )
 
 # Generate log file name with datetime stamp
@@ -93,6 +94,25 @@ else {
     Write-Log -Message "Using domain account for authentication." -Level INFO
 }
 
+# Function get basic details for host server 
+Function Get-HostServerDetails {
+    Param (
+        [string]$InstanceName
+    )
+
+    try {
+        Write-Log -Message "Retrieving host server details for $InstanceName" -Level INFO
+        $allProperties = Get-DbaInstanceProperty -SqlInstance $InstanceName
+        $HostServerProperties = $allProperties | Where-Object {
+            $_.Name -in @("FullyQualifiedNetName", "HostDistribution", "HostRelease", "OSVersion", "PhysicalMemory", "Processors")
+        } | Select-Object Name, Value
+        return $HostServerProperties
+    } catch {
+        Write-Log -Message "Failed to retrieve host server details for $InstanceName. Error: $_" -Level ERROR
+        return @()
+    }
+}
+
 # Function to get server configuration using dbatools
 function Get-SQLServerConfig {
     param (
@@ -103,12 +123,17 @@ function Get-SQLServerConfig {
     try {
         Write-Log -Message "Retrieving configuration for $InstanceName" -Level INFO
         $serverInfo = Get-DbaInstanceProperty -SqlInstance $InstanceName -ErrorAction Stop
-        return @{
-            'Version' = $serverInfo | Where-Object { $_.Name -eq 'VersionString' } | Select-Object -ExpandProperty Value
-            'Edition' = $serverInfo | Where-Object { $_.Name -eq 'Edition' } | Select-Object -ExpandProperty Value
-            'Collation' = $serverInfo | Where-Object { $_.Name -eq 'Collation' } | Select-Object -ExpandProperty Value
-            'IsClustered' = $serverInfo | Where-Object { $_.Name -eq 'IsClustered' } | Select-Object -ExpandProperty Value
+        $config = @{}
+        @('VersionString', 'Edition', 'Collation', 'IsClustered') | ForEach-Object {
+            $property = $_
+            $value = ($serverInfo | Where-Object { $_.Name -eq $property } | Select-Object -ExpandProperty Value -ErrorAction SilentlyContinue)
+            if ($value) {
+                $config[$property] = $value
+            } else {
+                Write-Log -Message "Property $property not found for $InstanceName" -Level WARNING
+            }
         }
+        return $config
     }
     catch {
         Write-Log -Message "Failed to retrieve configuration for $InstanceName. Error: $_" -Level ERROR
@@ -116,6 +141,7 @@ function Get-SQLServerConfig {
     }
 }
 
+# Define function to add database info to the document 
 function Add-DatabaseInfoToDoc {
     param (
         [Parameter(Mandatory=$true)]
@@ -125,7 +151,7 @@ function Add-DatabaseInfoToDoc {
     )
 
     foreach ($db in $Databases) {
-        $DocumentContent.Value += "`n#### $($db.Name)`n"
+        $DocumentContent.Value += "`nh4. $($db.Name)`n"
         $DocumentContent.Value += "| Property | Value |`n"
         $DocumentContent.Value += "| --- | --- |`n"
         foreach ($prop in $db.Keys | Where-Object { $_ -ne "Name" }) {
@@ -203,25 +229,30 @@ function Generate-AsBuiltDoc {
     foreach ($instance in $Instances) {
         Write-Log -Message "Starting document generation for $instance" -Level INFO
         
+        $hostserver = Get-HostServerDetails -InstanceName $instance
         $config = Get-SQLServerConfig -InstanceName $instance
         $databases = Get-SQLDatabases -InstanceName $instance
 
         if ($DocumentFormat -eq "markdown") {
-            $documentContent = "## SQL Server: $instance`n"
-            $documentContent += "### Configuration`n"
-            $documentContent += "| Key | Value |`n"
-            $documentContent += "| --- | --- |`n"
+            $documentContent = "h2. SQL Server: $instance`n"
+            $documentContent += "h3. Configuration`n"
+            $documentContent += "| *Property* | *Value* |`n"
             foreach ($key in $config.Keys) {
                 $documentContent += "| $key | $($config[$key]) |`n"
             }
 
-            $documentContent += "`n### System Databases`n"
-            foreach ($db in $databases.SystemDatabases) {
-                $documentContent += "`n#### $($db.Name)`n"
-                $documentContent += "| Property | Value |`n"
-                $documentContent += "| --- | --- |`n"
+            # Add Host Server Details
+            $documentContent += "`nh3. Host Server Details`n"
+            $documentContent += "| *Property* | *Value* |`n"
+            foreach ($property in $hostserver) {
+                $documentContent += "| $($property.Name) | $($property.Value) |`n"
+            }
 
-                # Define the order of properties for system databases, excluding CreationDate and CompatibilityLevel
+            $documentContent += "`nh3. System Databases`n"
+            foreach ($db in $databases.SystemDatabases) {
+                $documentContent += "`nh4. $($db.Name)`n"
+                $documentContent += "| *Property* | *Value* |`n"
+
                 $orderedPropertiesForSystem = @('Owner', 'RecoveryModel', 'IsAutoCreateStatisticsEnabled', 'LastBackupDate', 'IsReadCommittedSnapshotOn', 'AutoShrink', 'Status', 'SizeMB', 'AutoClose', 'IsAutoUpdateStatisticsEnabled')
                 
                 foreach ($prop in $orderedPropertiesForSystem) {
@@ -231,13 +262,12 @@ function Generate-AsBuiltDoc {
                 }
             }
 
-            $documentContent += "`n### User Databases`n"
+            $documentContent += "`nh3. User Databases`n"
             foreach ($db in $databases.UserDatabases) {
-                $documentContent += "`n#### $($db.Name)`n"
-                $documentContent += "| Property | Value |`n"
+                $documentContent += "`nh4. $($db.Name)`n"
+                $documentContent += "| *Property* | *Value* |`n"
                 $documentContent += "| --- | --- |`n"
 
-                # Use a different array for user databases if needed, here we're keeping all properties for example
                 $orderedPropertiesForUser = @('Owner', 'RecoveryModel', 'IsAutoCreateStatisticsEnabled', 'LastBackupDate', 'IsReadCommittedSnapshotOn', 'AutoShrink', 'Status', 'SizeMB', 'CreationDate', 'AutoClose', 'CompatibilityLevel', 'IsAutoUpdateStatisticsEnabled')
                 
                 foreach ($prop in $orderedPropertiesForUser) {
