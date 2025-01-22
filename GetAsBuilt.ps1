@@ -94,26 +94,26 @@ else {
     Write-Log -Message "Using domain account for authentication." -Level INFO
 }
 
-# Function get basic details for host server 
-Function Get-HostServerDetails {
+# Define function get basic properties for host server 
+Function Get-HostServerProperties {
     Param (
         [string]$InstanceName
     )
 
     try {
-        Write-Log -Message "Retrieving host server details for $InstanceName" -Level INFO
+        Write-Log -Message "Retrieving host server properties for $InstanceName" -Level INFO
         $allProperties = Get-DbaInstanceProperty -SqlInstance $InstanceName
         $HostServerProperties = $allProperties | Where-Object {
             $_.Name -in @("FullyQualifiedNetName", "HostDistribution", "HostRelease", "OSVersion", "PhysicalMemory", "Processors")
         } | Select-Object Name, Value
         return $HostServerProperties
     } catch {
-        Write-Log -Message "Failed to retrieve host server details for $InstanceName. Error: $_" -Level ERROR
+        Write-Log -Message "Failed to retrieve host server properties for $InstanceName. Error: $_" -Level ERROR
         return @()
     }
 }
 
-# Function to get server configuration using dbatools
+# Define function to get server configuration using dbatools
 function Get-SQLServerConfig {
     param (
         [Parameter(Mandatory=$true)]
@@ -141,6 +141,33 @@ function Get-SQLServerConfig {
     }
 }
 
+# Define function to get SQL Server Network Protocols' properties
+function Get-SQLServerNetworkProtocols {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$InstanceName
+    )
+
+    try {
+        Write-Log -Message "Retrieving network protocol information for $InstanceName" -Level INFO
+        $protocols = Get-DbaInstanceProtocol -SqlInstance $InstanceName -ErrorAction Stop
+        $protocolInfo = $protocols | ForEach-Object {
+            @{
+                'Name' = $_.Name
+                'Enabled' = $_.IsEnabled
+                'Order' = $_.Order
+                'Port' = if ($_.Name -eq "Tcp") { (Get-DbaTcpPort -SqlInstance $InstanceName).Port } else { "N/A" }
+            }
+        }
+        return $protocolInfo
+    }
+    catch {
+        Write-Log -Message "Failed to retrieve network protocols for $InstanceName. Error: $_" -Level ERROR
+        return @()
+    }
+}
+
+
 # Define function to add database info to the document 
 function Add-DatabaseInfoToDoc {
     param (
@@ -152,8 +179,7 @@ function Add-DatabaseInfoToDoc {
 
     foreach ($db in $Databases) {
         $DocumentContent.Value += "`nh4. $($db.Name)`n"
-        $DocumentContent.Value += "| Property | Value |`n"
-        $DocumentContent.Value += "| --- | --- |`n"
+        $DocumentContent.Value += "| *Property* | *Value* |`n"
         foreach ($prop in $db.Keys | Where-Object { $_ -ne "Name" }) {
             $DocumentContent.Value += "| $prop | $($db[$prop]) |`n"
         }
@@ -229,32 +255,85 @@ function Generate-AsBuiltDoc {
     foreach ($instance in $Instances) {
         Write-Log -Message "Starting document generation for $instance" -Level INFO
         
-        $hostserver = Get-HostServerDetails -InstanceName $instance
+        $hostserver = Get-HostServerProperties -InstanceName $instance
         $config = Get-SQLServerConfig -InstanceName $instance
         $databases = Get-SQLDatabases -InstanceName $instance
+        
+        $DiskInfo = Get-CimInstance -ClassName Win32_Volume | Where-Object {($_.DriveLetter).Length -eq 2} | ForEach-Object {
+            $diskData = @{
+                'Name' = $_.Name
+                'Label' = if ($_.Name -eq 'C:\' -and [string]::IsNullOrEmpty($_.Label)) { 'OS' } else { $_.Label }
+                'Size (GB)' = [math]::Round($_.Capacity / 1GB, 2)
+                'Free Space (GB)' = [math]::Round($_.FreeSpace / 1GB, 2)
+                'Block Size' = $_.BlockSize
+            }
+            $diskData
+        }
+
+        $ServicesInfo = Get-DbaService | ForEach-Object {
+            $ServicesData = @{
+                'Service Name' = $_.ServiceName
+                'Display Name' = $_.DisplayName
+                'Service Account' = $_.StartName
+                'Start Mode' = $_.StartMode
+                'State' = $_.State
+            }
+            $ServicesData
+        }
+
+        $NetworkProtocols = try {
+            Write-Log -Message "Retrieving network protocol information for $instance" -Level INFO
+            $protocols = Get-DbaInstanceProtocol -ErrorAction Stop
+            $protocols | ForEach-Object {
+                @{
+                    'DisplayName' = $_.DisplayName
+                    'Enabled' = $_.IsEnabled
+                    'Port' = if ($_.Name -eq "Tcp") { (Get-DbaTcpPort -SqlInstance $instance).Port } else { "N/A" }
+                }
+            }
+        }
+        catch {
+            Write-Log -Message "Failed to retrieve network protocols for $instance. Error: $_" -Level ERROR
+            @()
+        }
 
         if ($DocumentFormat -eq "markdown") {
-            $documentContent = "h2. SQL Server: $instance`n"
+            $documentContent = "h2. SQL Server: $instance @ $(get-date -format "dd MMMM yyyy")`n"
             $documentContent += "h3. Configuration`n"
-            $documentContent += "| *Property* | *Value* |`n"
+            $documentContent += "| *Key* | *Value* |`n"
             foreach ($key in $config.Keys) {
                 $documentContent += "| $key | $($config[$key]) |`n"
             }
 
-            # Add Host Server Details
-            $documentContent += "`nh3. Host Server Details`n"
+            $documentContent += "`nh3. Host Server Properties`n"
             $documentContent += "| *Property* | *Value* |`n"
             foreach ($property in $hostserver) {
                 $documentContent += "| $($property.Name) | $($property.Value) |`n"
             }
 
+            $documentContent += "`nh3. Disk Properties`n"
+            $documentContent += "| *Name* | *Label* | *Size (GB)* | *Free Space (GB)* | *Block Size* |`n"
+            foreach ($disk in $DiskInfo) {
+                $documentContent += "| $($disk.'Name') | $($disk.'Label') | $($disk.'Size (GB)') | $($disk.'Free Space (GB)') | $($disk.'Block Size') |`n"
+            }
+
+            $documentContent += "`nh3. Services Properties`n"
+            $documentContent += "| *Service Name* | *Display Name* | *Service Account* | *Start Mode* | *State* |`n"
+            foreach ($Service in $ServicesInfo) {
+                $documentContent += "| $($Service.'Service Name') | $($Service.'Display Name') | $($Service.'Service Account') | $($Service.'Start Mode') | $($Service.'State') |`n"
+            }
+
+            $documentContent += "`nh3. Network Protocols`n"
+            $documentContent += "| *Name* | *Enabled* | *Port* |`n"
+            foreach ($protocol in $NetworkProtocols) {
+                $documentContent += "| $($protocol.'DisplayName') | $($protocol.'Enabled') | $($protocol.'Port') |`n"
+            }
+
             $documentContent += "`nh3. System Databases`n"
+            $orderedPropertiesForSystem = @('Owner', 'RecoveryModel', 'IsAutoCreateStatisticsEnabled', 'LastBackupDate', 'IsReadCommittedSnapshotOn', 'AutoShrink', 'Status', 'SizeMB', 'AutoClose', 'IsAutoUpdateStatisticsEnabled')
             foreach ($db in $databases.SystemDatabases) {
                 $documentContent += "`nh4. $($db.Name)`n"
                 $documentContent += "| *Property* | *Value* |`n"
-
-                $orderedPropertiesForSystem = @('Owner', 'RecoveryModel', 'IsAutoCreateStatisticsEnabled', 'LastBackupDate', 'IsReadCommittedSnapshotOn', 'AutoShrink', 'Status', 'SizeMB', 'AutoClose', 'IsAutoUpdateStatisticsEnabled')
-                
                 foreach ($prop in $orderedPropertiesForSystem) {
                     if ($db.ContainsKey($prop)) {
                         $documentContent += "| $prop | $($db[$prop]) |`n"
@@ -263,13 +342,10 @@ function Generate-AsBuiltDoc {
             }
 
             $documentContent += "`nh3. User Databases`n"
+            $orderedPropertiesForUser = @('Owner', 'RecoveryModel', 'IsAutoCreateStatisticsEnabled', 'LastBackupDate', 'IsReadCommittedSnapshotOn', 'AutoShrink', 'Status', 'SizeMB', 'CreationDate', 'AutoClose', 'CompatibilityLevel', 'IsAutoUpdateStatisticsEnabled')
             foreach ($db in $databases.UserDatabases) {
                 $documentContent += "`nh4. $($db.Name)`n"
                 $documentContent += "| *Property* | *Value* |`n"
-                $documentContent += "| --- | --- |`n"
-
-                $orderedPropertiesForUser = @('Owner', 'RecoveryModel', 'IsAutoCreateStatisticsEnabled', 'LastBackupDate', 'IsReadCommittedSnapshotOn', 'AutoShrink', 'Status', 'SizeMB', 'CreationDate', 'AutoClose', 'CompatibilityLevel', 'IsAutoUpdateStatisticsEnabled')
-                
                 foreach ($prop in $orderedPropertiesForUser) {
                     if ($db.ContainsKey($prop)) {
                         $documentContent += "| $prop | $($db[$prop]) |`n"
