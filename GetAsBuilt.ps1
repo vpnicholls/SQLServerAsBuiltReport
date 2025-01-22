@@ -208,7 +208,6 @@ function Get-SQLDatabases {
             
             return @{
                 'Name' = $db.Name
-                'SizeMB' = [math]::Round($totalSizeBytes / 1048576, 2)
                 'Status' = $db.Status
                 'RecoveryModel' = $db.RecoveryModel
                 'CompatibilityLevel' = $db.Compatibility
@@ -297,6 +296,26 @@ function Generate-AsBuiltDoc {
             @()
         }
 
+        $LinkedServers = try {
+            Write-Log -Message "Retrieving linked server information for $instance" -Level INFO
+            Get-DbaLinkedServer -SqlInstance $instance -ErrorAction Stop | ForEach-Object {
+                @{
+                    'Linked Server Name' = $_.Name
+                    'Product Name' = $_.ProductName
+                    'Provider Name' = $_.ProviderName
+                    'Data Source' = $_.DataSource
+                    'Location' = $_.Location
+                    'Provider String' = $_.ProviderString
+                    'Is Remote Login Enabled' = $_.IsRemoteLoginEnabled
+                    'Is RPC Out Enabled' = $_.IsRpcOutEnabled
+                }
+            }
+        }
+        catch {
+            Write-Log -Message "Failed to retrieve linked server information for $instance. Error: $_" -Level ERROR
+            @()
+        }
+
         if ($DocumentFormat -eq "markdown") {
             $documentContent = "h2. SQL Server: $instance @ $(get-date -format "dd MMMM yyyy")`n"
             $documentContent += "h3. Configuration`n"
@@ -329,6 +348,28 @@ function Generate-AsBuiltDoc {
                 $documentContent += "| $($protocol.'DisplayName') | $($protocol.'Enabled') | $($protocol.'Port') |`n"
             }
 
+            $SystemDbFiles = try {
+                Write-Log -Message "Retrieving system database file information for $instance" -Level INFO
+                Get-DbaDbFile -SqlInstance $instance -Database (Get-DbaDatabase -SqlInstance $instance | Where-Object {$_.IsSystemObject}).Name | ForEach-Object {
+                    @{
+                        'Database' = $_.Database
+                        'File Type' = $_.Type
+                        'Logical Name' = $_.Name
+                        'Physical Name' = $_.PhysicalName
+                        'Size' = [math]::Round($_.Size / 1MB, 2)  # Size in MB
+                        'Growth' = if ($_.GrowthType -eq 'Percent') {
+                            "$($_.Growth)%"
+                        } else {
+                            "$($_.Growth) MB"
+                        }
+                    }
+                }
+            }
+            catch {
+                Write-Log -Message "Failed to retrieve system database file information for $instance. Error: $_" -Level ERROR
+                @()
+            }
+
             $documentContent += "`nh3. System Databases`n"
             $orderedPropertiesForSystem = @('Owner', 'RecoveryModel', 'IsAutoCreateStatisticsEnabled', 'LastBackupDate', 'IsReadCommittedSnapshotOn', 'AutoShrink', 'Status', 'SizeMB', 'AutoClose', 'IsAutoUpdateStatisticsEnabled')
             foreach ($db in $databases.SystemDatabases) {
@@ -341,6 +382,40 @@ function Generate-AsBuiltDoc {
                 }
             }
 
+            $documentContent += "`nh3. System Database File Sizes and Growth`n"
+            $documentContent += "| *Database* | *File Type* | *Logical Name* | *Physical Name* | *Size (MB)* | *Growth* |`n"
+            foreach ($file in $SystemDbFiles) {
+                $documentContent += "| $($file.'Database') | $($file.'File Type') | $($file.'Logical Name') | $($file.'Physical Name') | $($file.'Size') | $($file.'Growth') |`n"
+            }
+
+            $UserDbFiles = try {
+                Write-Log -Message "Retrieving system database file information for $instance" -Level INFO
+                Get-DbaDbFile -SqlInstance $instance -Database (Get-DbaDatabase -SqlInstance $instance | Where-Object {-not $_.IsSystemObject}).Name | ForEach-Object {
+                    @{
+                        'Database' = $_.Database
+                        'File Type' = $_.Type
+                        'Logical Name' = $_.Name
+                        'Physical Name' = $_.PhysicalName
+                        'Size' = [math]::Round($_.Size / 1MB, 2)  # Size in MB
+                        'Growth' = if ($_.GrowthType -eq 'Percent') {
+                            "$($_.Growth)%"
+                        } else {
+                            "$($_.Growth) MB"
+                        }
+                    }
+                }
+            }
+            catch {
+                Write-Log -Message "Failed to retrieve system database file information for $instance. Error: $_" -Level ERROR
+                @()
+            }
+
+            $documentContent += "`nh3. User Database File Sizes and Growth`n"
+            $documentContent += "| *Database* | *File Type* | *Logical Name* | *Physical Name* | *Size (MB)* | *Growth* |`n"
+            foreach ($file in $UserDbFiles) {
+                $documentContent += "| $($file.'Database') | $($file.'File Type') | $($file.'Logical Name') | $($file.'Physical Name') | $($file.'Size') | $($file.'Growth') |`n"
+            }
+
             $documentContent += "`nh3. User Databases`n"
             $orderedPropertiesForUser = @('Owner', 'RecoveryModel', 'IsAutoCreateStatisticsEnabled', 'LastBackupDate', 'IsReadCommittedSnapshotOn', 'AutoShrink', 'Status', 'SizeMB', 'CreationDate', 'AutoClose', 'CompatibilityLevel', 'IsAutoUpdateStatisticsEnabled')
             foreach ($db in $databases.UserDatabases) {
@@ -351,6 +426,12 @@ function Generate-AsBuiltDoc {
                         $documentContent += "| $prop | $($db[$prop]) |`n"
                     }
                 }
+            }
+
+            $documentContent += "`nh3. Linked Servers`n"
+            $documentContent += "| *Linked Server Name* | *Product Name* | *Provider Name* | *Data Source* | *Location* | *Provider String* | *Is Remote Login Enabled* | *Is RPC Out Enabled* |`n"
+            foreach ($server in $LinkedServers) {
+                $documentContent += "| $($server.'Linked Server Name') | $($server.'Product Name') | $($server.'Provider Name') | $($server.'Data Source') | $($server.'Location') | $($server.'Provider String') | $($server.'Is Remote Login Enabled') | $($server.'Is RPC Out Enabled') |`n"
             }
 
             # Generate unique filename with server name and date
