@@ -141,51 +141,6 @@ function Get-SQLServerConfig {
     }
 }
 
-# Define function to get SQL Server Network Protocols' properties
-function Get-SQLServerNetworkProtocols {
-    param (
-        [Parameter(Mandatory=$true)]
-        [string]$InstanceName
-    )
-
-    try {
-        Write-Log -Message "Retrieving network protocol information for $InstanceName" -Level INFO
-        $protocols = Get-DbaInstanceProtocol -SqlInstance $InstanceName -ErrorAction Stop
-        $protocolInfo = $protocols | ForEach-Object {
-            @{
-                'Name' = $_.Name
-                'Enabled' = $_.IsEnabled
-                'Order' = $_.Order
-                'Port' = if ($_.Name -eq "Tcp") { (Get-DbaTcpPort -SqlInstance $InstanceName).Port } else { "N/A" }
-            }
-        }
-        return $protocolInfo
-    }
-    catch {
-        Write-Log -Message "Failed to retrieve network protocols for $InstanceName. Error: $_" -Level ERROR
-        return @()
-    }
-}
-
-
-# Define function to add database info to the document 
-function Add-DatabaseInfoToDoc {
-    param (
-        [Parameter(Mandatory=$true)]
-        [Array]$Databases,
-        [Parameter(Mandatory=$true)]
-        [ref]$DocumentContent
-    )
-
-    foreach ($db in $Databases) {
-        $DocumentContent.Value += "`nh4. $($db.Name)`n"
-        $DocumentContent.Value += "| *Property* | *Value* |`n"
-        foreach ($prop in $db.Keys | Where-Object { $_ -ne "Name" }) {
-            $DocumentContent.Value += "| $prop | $($db[$prop]) |`n"
-        }
-    }
-}
-
 # Function to get databases details using dbatools
 function Get-SQLDatabases {
     param (
@@ -258,6 +213,7 @@ function Generate-AsBuiltDoc {
         $config = Get-SQLServerConfig -InstanceName $instance
         $databases = Get-SQLDatabases -InstanceName $instance
         
+        # Get disk properties
         $DiskInfo = Get-CimInstance -ClassName Win32_Volume | Where-Object {($_.DriveLetter).Length -eq 2} | ForEach-Object {
             $diskData = @{
                 'Name' = $_.Name
@@ -269,6 +225,7 @@ function Generate-AsBuiltDoc {
             $diskData
         }
 
+        # Get services properties
         $ServicesInfo = Get-DbaService | ForEach-Object {
             $ServicesData = @{
                 'Service Name' = $_.ServiceName
@@ -280,6 +237,7 @@ function Generate-AsBuiltDoc {
             $ServicesData
         }
 
+        # Get network protocols
         $NetworkProtocols = try {
             Write-Log -Message "Retrieving network protocol information for $instance" -Level INFO
             $protocols = Get-DbaInstanceProtocol -ErrorAction Stop
@@ -296,6 +254,7 @@ function Generate-AsBuiltDoc {
             @()
         }
 
+        # Get linked servers
         $LinkedServers = try {
             Write-Log -Message "Retrieving linked server information for $instance" -Level INFO
             Get-DbaLinkedServer -SqlInstance $instance -ErrorAction Stop | ForEach-Object {
@@ -318,36 +277,43 @@ function Generate-AsBuiltDoc {
 
         if ($DocumentFormat -eq "markdown") {
             $documentContent = "h2. SQL Server: $instance @ $(get-date -format "dd MMMM yyyy")`n"
-            $documentContent += "h3. Configuration`n"
-            $documentContent += "| *Key* | *Value* |`n"
-            foreach ($key in $config.Keys) {
-                $documentContent += "| $key | $($config[$key]) |`n"
-            }
 
+            # Set host server properties in document
             $documentContent += "`nh3. Host Server Properties`n"
             $documentContent += "| *Property* | *Value* |`n"
             foreach ($property in $hostserver) {
                 $documentContent += "| $($property.Name) | $($property.Value) |`n"
             }
 
+            # Set SQL Server properties in document
+            $documentContent += "h3. SQL Server Instance Properties`n"
+            $documentContent += "| *Property* | *Value* |`n"
+            foreach ($key in $config.Keys) {
+                $documentContent += "| $key | $($config[$key]) |`n"
+            }
+
+            # Set disk properties in document
             $documentContent += "`nh3. Disk Properties`n"
             $documentContent += "| *Name* | *Label* | *Size (GB)* | *Free Space (GB)* | *Block Size* |`n"
             foreach ($disk in $DiskInfo) {
                 $documentContent += "| $($disk.'Name') | $($disk.'Label') | $($disk.'Size (GB)') | $($disk.'Free Space (GB)') | $($disk.'Block Size') |`n"
             }
 
+            # Set service properties in document
             $documentContent += "`nh3. Services Properties`n"
             $documentContent += "| *Service Name* | *Display Name* | *Service Account* | *Start Mode* | *State* |`n"
             foreach ($Service in $ServicesInfo) {
                 $documentContent += "| $($Service.'Service Name') | $($Service.'Display Name') | $($Service.'Service Account') | $($Service.'Start Mode') | $($Service.'State') |`n"
             }
 
+            # Set network protocols in document
             $documentContent += "`nh3. Network Protocols`n"
             $documentContent += "| *Name* | *Enabled* | *Port* |`n"
             foreach ($protocol in $NetworkProtocols) {
                 $documentContent += "| $($protocol.'DisplayName') | $($protocol.'Enabled') | $($protocol.'Port') |`n"
             }
 
+            # Get system databases' file properties --
             $SystemDbFiles = try {
                 Write-Log -Message "Retrieving system database file information for $instance" -Level INFO
                 Get-DbaDbFile -SqlInstance $instance -Database (Get-DbaDatabase -SqlInstance $instance | Where-Object {$_.IsSystemObject}).Name | ForEach-Object {
@@ -370,6 +336,7 @@ function Generate-AsBuiltDoc {
                 @()
             }
 
+            # Set system databases' properties in document
             $documentContent += "`nh3. System Databases`n"
             $orderedPropertiesForSystem = @('Owner', 'RecoveryModel', 'IsAutoCreateStatisticsEnabled', 'LastBackupDate', 'IsReadCommittedSnapshotOn', 'AutoShrink', 'Status', 'SizeMB', 'AutoClose', 'IsAutoUpdateStatisticsEnabled')
             foreach ($db in $databases.SystemDatabases) {
@@ -388,6 +355,7 @@ function Generate-AsBuiltDoc {
                 $documentContent += "| $($file.'Database') | $($file.'File Type') | $($file.'Logical Name') | $($file.'Physical Name') | $($file.'Size') | $($file.'Growth') |`n"
             }
 
+            # Get user databases' file properties --
             $UserDbFiles = try {
                 Write-Log -Message "Retrieving system database file information for $instance" -Level INFO
                 Get-DbaDbFile -SqlInstance $instance -Database (Get-DbaDatabase -SqlInstance $instance | Where-Object {-not $_.IsSystemObject}).Name | ForEach-Object {
@@ -410,12 +378,14 @@ function Generate-AsBuiltDoc {
                 @()
             }
 
+            # Set user databases' file properties in document
             $documentContent += "`nh3. User Database File Sizes and Growth`n"
             $documentContent += "| *Database* | *File Type* | *Logical Name* | *Physical Name* | *Size (MB)* | *Growth* |`n"
             foreach ($file in $UserDbFiles) {
                 $documentContent += "| $($file.'Database') | $($file.'File Type') | $($file.'Logical Name') | $($file.'Physical Name') | $($file.'Size') | $($file.'Growth') |`n"
             }
 
+            # Set user databases' properties in document
             $documentContent += "`nh3. User Databases`n"
             $orderedPropertiesForUser = @('Owner', 'RecoveryModel', 'IsAutoCreateStatisticsEnabled', 'LastBackupDate', 'IsReadCommittedSnapshotOn', 'AutoShrink', 'Status', 'SizeMB', 'CreationDate', 'AutoClose', 'CompatibilityLevel', 'IsAutoUpdateStatisticsEnabled')
             foreach ($db in $databases.UserDatabases) {
@@ -428,6 +398,7 @@ function Generate-AsBuiltDoc {
                 }
             }
 
+            # Set Linked Server properties in document
             $documentContent += "`nh3. Linked Servers`n"
             $documentContent += "| *Linked Server Name* | *Product Name* | *Provider Name* | *Data Source* | *Location* | *Provider String* | *Is Remote Login Enabled* | *Is RPC Out Enabled* |`n"
             foreach ($server in $LinkedServers) {
