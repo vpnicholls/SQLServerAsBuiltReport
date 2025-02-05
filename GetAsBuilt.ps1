@@ -124,7 +124,7 @@ function Get-SQLServerConfig {
         Write-Log -Message "Retrieving configuration for $InstanceName" -Level INFO
         $serverInfo = Get-DbaInstanceProperty -SqlInstance $InstanceName -ErrorAction Stop
         $config = @{}
-        @('VersionString', 'Edition', 'Collation', 'IsClustered') | ForEach-Object {
+        @('VersionString', 'Edition', 'Collation', 'IsClustered')| ForEach-Object {
             $property = $_
             $value = ($serverInfo | Where-Object { $_.Name -eq $property } | Select-Object -ExpandProperty Value -ErrorAction SilentlyContinue)
             if ($value) {
@@ -332,37 +332,37 @@ function Generate-AsBuiltDoc {
 
             # Set host server properties in document
             $documentContent += "`nh3. Host Server Properties`n"
-            $documentContent += "| *Property* | *Value* |`n"
+            $documentContent += "|*Property*|*Value*|`n"
             foreach ($property in $hostserver) {
-                $documentContent += "| $($property.Name) | $($property.Value) |`n"
+                $documentContent += "|$($property.Name)|$($property.Value)|`n"
             }
 
             # Set SQL Server properties in document
             $documentContent += "h3. SQL Server Instance Properties`n"
-            $documentContent += "| *Property* | *Value* |`n"
+            $documentContent += "|*Property*|*Value*|`n"
             foreach ($key in $config.Keys) {
-                $documentContent += "| $key | $($config[$key]) |`n"
+                $documentContent += "|$key|$($config[$key])|`n"
             }
 
             # Set disk properties in document
             $documentContent += "`nh3. Disk Properties`n"
-            $documentContent += "| *Name* | *Label* | *Size (GB)* | *Free Space (GB)* | *Block Size* |`n"
+            $documentContent += "|*Name*|*Label*|*Size (GB)*|*Free Space (GB)*|*Block Size*|`n"
             foreach ($disk in $DiskInfo) {
-                $documentContent += "| $($disk.'Name') | $($disk.'Label') | $($disk.'Size (GB)') | $($disk.'Free Space (GB)') | $($disk.'Block Size') |`n"
+                $documentContent += "|$($disk.'Name')|$($disk.'Label')|$($disk.'Size (GB)')|$($disk.'Free Space (GB)')|$($disk.'Block Size')|`n"
             }
 
             # Set service properties in document
             $documentContent += "`nh3. Services Properties`n"
-            $documentContent += "| *Service Name* | *Display Name* | *Service Account* | *Start Mode* | *State* |`n"
+            $documentContent += "|*Service Name*|*Display Name*|*Service Account*|*Start Mode*|*State*|`n"
             foreach ($Service in $ServicesInfo) {
-                $documentContent += "| $($Service.'Service Name') | $($Service.'Display Name') | $($Service.'Service Account') | $($Service.'Start Mode') | $($Service.'State') |`n"
+                $documentContent += "|$($Service.'Service Name')|$($Service.'Display Name')|$($Service.'Service Account')|$($Service.'Start Mode')|$($Service.'State')|`n"
             }
 
             # Set network protocols in document
             $documentContent += "`nh3. Network Protocols`n"
-            $documentContent += "| *Name* | *Enabled* | *Port* |`n"
+            $documentContent += "|*Name*|*Enabled*|*Port*|`n"
             foreach ($protocol in $NetworkProtocols) {
-                $documentContent += "| $($protocol.'DisplayName') | $($protocol.'Enabled') | $($protocol.'Port') |`n"
+                $documentContent += "|$($protocol.'DisplayName')|$($protocol.'Enabled')|$($protocol.'Port')|`n"
             }
 
             # Get system databases' file properties
@@ -393,18 +393,18 @@ function Generate-AsBuiltDoc {
             $orderedPropertiesForSystem = @('Owner', 'RecoveryModel', 'IsAutoCreateStatisticsEnabled', 'LastBackupDate', 'IsReadCommittedSnapshotOn', 'AutoShrink', 'Status', 'SizeMB', 'AutoClose', 'IsAutoUpdateStatisticsEnabled')
             foreach ($db in $databases.SystemDatabases) {
                 $documentContent += "`nh4. $($db.Name)`n"
-                $documentContent += "| *Property* | *Value* |`n"
+                $documentContent += "|*Property*|*Value*|`n"
                 foreach ($prop in $orderedPropertiesForSystem) {
                     if ($db.ContainsKey($prop)) {
-                        $documentContent += "| $prop | $($db[$prop]) |`n"
+                        $documentContent += "|$prop|$($db[$prop])|`n"
                     }
                 }
             }
 
             $documentContent += "`nh3. System Database File Sizes and Growth`n"
-            $documentContent += "| *Database* | *File Type* | *Logical Name* | *Physical Name* | *Size (MB)* | *Growth* |`n"
+            $documentContent += "|*Database*|*File Type*|*Logical Name*|*Physical Name*|*Size (MB)*|*Growth*|`n"
             foreach ($file in $SystemDbFiles) {
-                $documentContent += "| $($file.'Database') | $($file.'File Type') | $($file.'Logical Name') | $($file.'Physical Name') | $($file.'Size') | $($file.'Growth') |`n"
+                $documentContent += "|$($file.'Database')|$($file.'File Type')|$($file.'Logical Name')|$($file.'Physical Name')|$($file.'Size')|$($file.'Growth')|`n"
             }
 
             # Get user databases' file properties
@@ -432,9 +432,9 @@ function Generate-AsBuiltDoc {
 
             # Set user databases' file properties in document
             $documentContent += "`nh3. User Database File Sizes and Growth`n"
-            $documentContent += "| *Database* | *File Type* | *Logical Name* | *Physical Name* | *Size (MB)* | *Growth* |`n"
+            $documentContent += "|*Database*|*File Type*|*Logical Name*|*Physical Name*|*Size (MB)*|*Growth*|`n"
             foreach ($file in $UserDbFiles) {
-                $documentContent += "| $($file.'Database') | $($file.'File Type') | $($file.'Logical Name') | $($file.'Physical Name') | $($file.'Size') | $($file.'Growth') |`n"
+                $documentContent += "|$($file.'Database')|$($file.'File Type')|$($file.'Logical Name')|$($file.'Physical Name')|$($file.'Size')|$($file.'Growth')|`n"
             }
 
             # Set user databases' properties in document
@@ -442,10 +442,10 @@ function Generate-AsBuiltDoc {
             $orderedPropertiesForUser = @('Owner', 'RecoveryModel', 'IsAutoCreateStatisticsEnabled', 'LastBackupDate', 'IsReadCommittedSnapshotOn', 'AutoShrink', 'Status', 'SizeMB', 'CreationDate', 'AutoClose', 'CompatibilityLevel', 'IsAutoUpdateStatisticsEnabled')
             foreach ($db in $databases.UserDatabases) {
                 $documentContent += "`nh4. $($db.Name)`n"
-                $documentContent += "| *Property* | *Value* |`n"
+                $documentContent += "|*Property*|*Value*|`n"
                 foreach ($prop in $orderedPropertiesForUser) {
                     if ($db.ContainsKey($prop)) {
-                        $documentContent += "| $prop | $($db[$prop]) |`n"
+                        $documentContent += "|$prop|$($db[$prop])|`n"
                     }
                 }
             }
@@ -456,19 +456,19 @@ function Generate-AsBuiltDoc {
             if ($DocumentFormat -eq "markdown") {
                 # Markdown formatting for Listeners
                 $documentContent += "`nh3. Availability Group Listeners`n"
-                $documentContent += "| AvailabilityGroup | ListenerName | ClusterIPConfiguration | PortNumber |`n"
+                $documentContent += "|*AvailabilityGroup*|*ListenerName*|*ClusterIPConfiguration*|*PortNumber*|`n"
                 foreach ($listener in $agDetails.Listeners) {
-                    $documentContent += "| $($listener.AvailabilityGroup) | $($listener.ListenerName) | $($listener.ClusterIPConfiguration) | $($listener.PortNumber) |`n"
+                    $documentContent += "|$($listener.AvailabilityGroup)|$($listener.ListenerName)|$($listener.ClusterIPConfiguration)|$($listener.PortNumber)|`n"
                 }
 
                 # Markdown formatting for Databases
                 $documentContent += "`nh3. Availability Group Databases`n"
-                $documentContent += "| AvailabilityGroup | Databases | LocalReplicaRole | SynchronizationState |`n"
+                $documentContent += "|*AvailabilityGroup*|*Databases*|*LocalReplicaRole*|*SynchronizationState*|`n"
                 foreach ($group in $agDetails.Databases) {
                     # Use -join operator instead of Join-String
                     $databases = ($group.Group | Sort-Object -Property Name | ForEach-Object { $_.Name }) -join ", "
                     $sampleDb = $group.Group | Select-Object -First 1
-                    $documentContent += "| $($group.Name) | $databases | $($sampleDb.LocalReplicaRole) | $($sampleDb.SynchronizationState) |`n"
+                    $documentContent += "|$($group.Name)|$databases|$($sampleDb.LocalReplicaRole)|$($sampleDb.SynchronizationState)|`n"
                 }
             } else {
                 Write-Log -Message "Document format $DocumentFormat not implemented for AG details yet." -Level WARNING
@@ -476,16 +476,16 @@ function Generate-AsBuiltDoc {
 
             # Set Endpoint properties in document
             $documentContent += "`nh3. Endpoints`n"
-            $documentContent += "| *Endpoint Type* | *Owner* | *Protocol Type* | *Name* |`n"
+            $documentContent += "|*Endpoint Type*|*Owner*|*Protocol Type*|*Name*|`n"
             foreach ($Endpoint in $EndpointProperties) {
-                $documentContent += "| $($Endpoint.EndpointType) | $($Endpoint.Owner) | $($Endpoint.ProtocolType) | $($Endpoint.Name) | $($Endpoint.Port) |`n"
+                $documentContent += "|$($Endpoint.EndpointType)|$($Endpoint.Owner)|$($Endpoint.ProtocolType)|$($Endpoint.Name)|$($Endpoint.Port)|`n"
             }
 
             # Set Linked Server properties in document
             $documentContent += "`nh3. Linked Servers`n"
-            $documentContent += "| *Linked Server Name* | *Product Name* | *Provider Name* | *Data Source* | *Location* | *Provider String* | *Is Remote Login Enabled* | *Is RPC Out Enabled* |`n"
+            $documentContent += "|*Linked Server Name*|*Product Name*|*Provider Name*|*Data Source*|*Location*|*Provider String*|*Is Remote Login Enabled*|*Is RPC Out Enabled*|`n"
             foreach ($server in $LinkedServers) {
-                $documentContent += "| $($server.'Linked Server Name') | $($server.'Product Name') | $($server.'Provider Name') | $($server.'Data Source') | $($server.'Location') | $($server.'Provider String') | $($server.'Is Remote Login Enabled') | $($server.'Is RPC Out Enabled') |`n"
+                $documentContent += "|$($server.'Linked Server Name')|$($server.'Product Name')|$($server.'Provider Name')|$($server.'Data Source')|$($server.'Location')|$($server.'Provider String')|$($server.'Is Remote Login Enabled')|$($server.'Is RPC Out Enabled')|`n"
             }
 
             # Generate unique filename with server name and date
