@@ -94,7 +94,7 @@ else {
     Write-Log -Message "Using domain account for authentication." -Level INFO
 }
 
-# Define function get basic properties for host server 
+# Define function to get basic properties for host server 
 Function Get-HostServerProperties {
     Param (
         [string]$InstanceName
@@ -141,7 +141,7 @@ function Get-SQLServerConfig {
     }
 }
 
-# Function to get databases details using dbatools
+# Function to get databases' properties
 function Get-SQLDatabases {
     param (
         [Parameter(Mandatory=$true)]
@@ -194,7 +194,7 @@ function Get-SQLDatabases {
     }
 }
 
-# Function to Availability Group listeners' and databases' details
+# Function to get Availability Group listeners' and databases' properties
 function Add-AgListenerAndDatabaseDetails {
     param (
         [Parameter(Mandatory=$true)]
@@ -290,6 +290,22 @@ function Generate-AsBuiltDoc {
             @()
         }
 
+        # Get Endpoint properties
+        $EndpointProperties = try {
+            Write-Log -Message "Retrieving linked server information for $instance" -Level INFO
+            Get-DbaEndpoint -SqlInstance bpnz-qa-sql20 -SqlCredential $SqlCredential | where {$_.IsSystemObject -eq $False} -ErrorAction Stop | ForEach-Object {
+                @{
+                    'EndpointType' = $_.EndpointType
+                    'Owner' = $_.Owner
+                    'ProtocolType' = $_.ProtocolType
+                    'Name' = $_.Name
+                    'Port' = $_.Port
+                }
+            }
+        } catch {
+            Write-Log -Message "Failed to retrieve Endpoint properties for $instance. Error: $_" -Level ERROR
+        }
+
         # Get linked servers
         $LinkedServers = try {
             Write-Log -Message "Retrieving linked server information for $instance" -Level INFO
@@ -349,7 +365,7 @@ function Generate-AsBuiltDoc {
                 $documentContent += "| $($protocol.'DisplayName') | $($protocol.'Enabled') | $($protocol.'Port') |`n"
             }
 
-            # Get system databases' file properties --
+            # Get system databases' file properties
             $SystemDbFiles = try {
                 Write-Log -Message "Retrieving system database file information for $instance" -Level INFO
                 Get-DbaDbFile -SqlInstance $instance -Database (Get-DbaDatabase -SqlInstance $instance | Where-Object {$_.IsSystemObject}).Name | ForEach-Object {
@@ -391,7 +407,7 @@ function Generate-AsBuiltDoc {
                 $documentContent += "| $($file.'Database') | $($file.'File Type') | $($file.'Logical Name') | $($file.'Physical Name') | $($file.'Size') | $($file.'Growth') |`n"
             }
 
-            # Get user databases' file properties --
+            # Get user databases' file properties
             $UserDbFiles = try {
                 Write-Log -Message "Retrieving system database file information for $instance" -Level INFO
                 Get-DbaDbFile -SqlInstance $instance -Database (Get-DbaDatabase -SqlInstance $instance | Where-Object {-not $_.IsSystemObject}).Name | ForEach-Object {
@@ -456,6 +472,13 @@ function Generate-AsBuiltDoc {
                 }
             } else {
                 Write-Log -Message "Document format $DocumentFormat not implemented for AG details yet." -Level WARNING
+            }
+
+            # Set Endpoint properties in document
+            $documentContent += "`nh3. Endpoints`n"
+            $documentContent += "| *Endpoint Type* | *Owner* | *Protocol Type* | *Name* |`n"
+            foreach ($Endpoint in $EndpointProperties) {
+                $documentContent += "| $($Endpoint.EndpointType) | $($Endpoint.Owner) | $($Endpoint.ProtocolType) | $($Endpoint.Name) | $($Endpoint.Port) |`n"
             }
 
             # Set Linked Server properties in document
