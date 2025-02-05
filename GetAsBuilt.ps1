@@ -292,7 +292,7 @@ function Generate-AsBuiltDoc {
 
         # Get Endpoint properties
         $EndpointProperties = try {
-            Write-Log -Message "Retrieving linked server information for $instance" -Level INFO
+            Write-Log -Message "Retrieving Endpoint properties for $instance" -Level INFO
             Get-DbaEndpoint -SqlInstance bpnz-qa-sql20 -SqlCredential $SqlCredential | where {$_.IsSystemObject -eq $False} -ErrorAction Stop | ForEach-Object {
                 @{
                     'EndpointType' = $_.EndpointType
@@ -304,6 +304,23 @@ function Generate-AsBuiltDoc {
             }
         } catch {
             Write-Log -Message "Failed to retrieve Endpoint properties for $instance. Error: $_" -Level ERROR
+        }
+
+        # Get database certificates
+        $DatabaseCertificates = try {
+            Write-Log -Message "Retrieving Database Certificate properties for $instance" -Level INFO
+            Get-DbaDbCertificate -SqlInstance bpnz-qa-sql20 -SqlCredential $SqlCredential | where {$_.PrivateKeyEncryptionType -ne "NoKey"} -ErrorAction Stop | ForEach-Object {
+                @{
+                    'Database' = $_.Database
+                    'Name' = $_.Name
+                    'Issuer' = $_.Issuer
+                    'PrivateKeyEncryptionType' = $_.PrivateKeyEncryptionType
+                    'StartDate' = $_.StartDate
+                    'ExpirationDate' = $_.ExpirationDate
+                }
+            }
+        } catch {
+            Write-Log -Message "Failed to retrieve Database Certificate properties for $instance. Error: $_" -Level ERROR
         }
 
         # Get linked servers
@@ -338,7 +355,7 @@ function Generate-AsBuiltDoc {
             }
 
             # Set SQL Server properties in document
-            $documentContent += "h3. SQL Server Instance Properties`n"
+            $documentContent += "`nh3. SQL Server Instance Properties`n"
             $documentContent += "|*Property*|*Value*|`n"
             foreach ($key in $config.Keys) {
                 $documentContent += "|$key|$($config[$key])|`n"
@@ -476,6 +493,13 @@ function Generate-AsBuiltDoc {
 
             # Set Endpoint properties in document
             $documentContent += "`nh3. Endpoints`n"
+            $documentContent += "|*Database*|*Name*|*Issuer*|*PrivateKeyEncryptionType*|*Start Date*|*Expiration Date*|`n"
+            foreach ($DatabaseCertificate in $DatabaseCertificates) {
+                $documentContent += "|$($DatabaseCertificate.Database)|$($DatabaseCertificate.Name)|$($DatabaseCertificate.Issuer)|$($DatabaseCertificate.PrivateKeyEncryptionType)|$($DatabaseCertificate.StartDate)|$($DatabaseCertificate.ExpirationDate)|`n"
+            }
+
+            # Set Database Certificate properties in document
+            $documentContent += "`nh3. Database Certificates`n"
             $documentContent += "|*Endpoint Type*|*Owner*|*Protocol Type*|*Name*|`n"
             foreach ($Endpoint in $EndpointProperties) {
                 $documentContent += "|$($Endpoint.EndpointType)|$($Endpoint.Owner)|$($Endpoint.ProtocolType)|$($Endpoint.Name)|$($Endpoint.Port)|`n"
