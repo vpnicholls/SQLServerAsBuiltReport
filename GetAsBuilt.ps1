@@ -194,6 +194,42 @@ function Get-SQLDatabases {
     }
 }
 
+# Function to Availability Group listeners' and databases' details
+function Add-AgListenerAndDatabaseDetails {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$InstanceName,
+        [Parameter(Mandatory=$true)]
+        [System.Management.Automation.PSCredential]$SqlCredential
+    )
+
+    try {
+        Write-Log -Message "Retrieving AG Listener details for $InstanceName" -Level INFO
+        $AGLs = Get-DbaAgListener -SqlInstance $InstanceName -SqlCredential $SqlCredential
+        $listenerDetails = $AGLs | Select-Object AvailabilityGroup, @{Name='ListenerName';Expression={$_.Name}}, ClusterIPConfiguration, PortNumber
+
+        Write-Log -Message "Retrieving AG Database details for $InstanceName" -Level INFO
+        $AGDBs = Get-DbaAgDatabase -SqlInstance $InstanceName -SqlCredential $SqlCredential
+
+        # Group databases by Availability Group
+        $groupedDatabases = $AGDBs | Group-Object -Property AvailabilityGroup
+
+        $details = @{
+            'Listeners' = $listenerDetails
+            'Databases' = $groupedDatabases
+        }
+
+        return $details
+    }
+    catch {
+        Write-Log -Message "Failed to retrieve AG Listener and Database details for $InstanceName. Error: $_" -Level ERROR
+        return @{
+            'Listeners' = @()
+            'Databases' = @()
+        }
+    }
+}
+
 #######################################################
 ### Main function to generate the As Built Document ###
 #######################################################
@@ -396,6 +432,30 @@ function Generate-AsBuiltDoc {
                         $documentContent += "| $prop | $($db[$prop]) |`n"
                     }
                 }
+            }
+
+            # Set Availability Group properties in document
+            $agDetails = Add-AgListenerAndDatabaseDetails -InstanceName $instance -SqlCredential $SqlCredential
+
+            if ($DocumentFormat -eq "markdown") {
+                # Markdown formatting for Listeners
+                $documentContent += "`nh3. Availability Group Listeners`n"
+                $documentContent += "| AvailabilityGroup | ListenerName | ClusterIPConfiguration | PortNumber |`n"
+                foreach ($listener in $agDetails.Listeners) {
+                    $documentContent += "| $($listener.AvailabilityGroup) | $($listener.ListenerName) | $($listener.ClusterIPConfiguration) | $($listener.PortNumber) |`n"
+                }
+
+                # Markdown formatting for Databases
+                $documentContent += "`nh3. Availability Group Databases`n"
+                $documentContent += "| AvailabilityGroup | Databases | LocalReplicaRole | SynchronizationState |`n"
+                foreach ($group in $agDetails.Databases) {
+                    # Use -join operator instead of Join-String
+                    $databases = ($group.Group | Sort-Object -Property Name | ForEach-Object { $_.Name }) -join ", "
+                    $sampleDb = $group.Group | Select-Object -First 1
+                    $documentContent += "| $($group.Name) | $databases | $($sampleDb.LocalReplicaRole) | $($sampleDb.SynchronizationState) |`n"
+                }
+            } else {
+                Write-Log -Message "Document format $DocumentFormat not implemented for AG details yet." -Level WARNING
             }
 
             # Set Linked Server properties in document
