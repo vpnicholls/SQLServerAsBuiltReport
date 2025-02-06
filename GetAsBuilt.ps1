@@ -293,7 +293,7 @@ function Generate-AsBuiltDoc {
         # Get Endpoint properties
         $EndpointProperties = try {
             Write-Log -Message "Retrieving Endpoint properties for $instance" -Level INFO
-            Get-DbaEndpoint -SqlInstance bpnz-qa-sql20 -SqlCredential $SqlCredential | where {$_.IsSystemObject -eq $False} -ErrorAction Stop | ForEach-Object {
+            Get-DbaEndpoint -SqlInstance $instance -SqlCredential $SqlCredential | where {$_.IsSystemObject -eq $False} -ErrorAction Stop | ForEach-Object {
                 @{
                     'EndpointType' = $_.EndpointType
                     'Owner' = $_.Owner
@@ -309,7 +309,7 @@ function Generate-AsBuiltDoc {
         # Get database certificates
         $DatabaseCertificates = try {
             Write-Log -Message "Retrieving Database Certificate properties for $instance" -Level INFO
-            Get-DbaDbCertificate -SqlInstance bpnz-qa-sql20 -SqlCredential $SqlCredential | where {$_.PrivateKeyEncryptionType -ne "NoKey"} -ErrorAction Stop | ForEach-Object {
+            Get-DbaDbCertificate -SqlInstance $instance -SqlCredential $SqlCredential | where {$_.PrivateKeyEncryptionType -ne "NoKey"} -ErrorAction Stop | ForEach-Object {
                 @{
                     'Database' = $_.Database
                     'Name' = $_.Name
@@ -332,10 +332,8 @@ function Generate-AsBuiltDoc {
                     'Product Name' = $_.ProductName
                     'Provider Name' = $_.ProviderName
                     'Data Source' = $_.DataSource
-                    'Location' = $_.Location
-                    'Provider String' = $_.ProviderString
-                    'Is Remote Login Enabled' = $_.IsRemoteLoginEnabled
-                    'Is RPC Out Enabled' = $_.IsRpcOutEnabled
+                    'Impersonate' = $_.Impersonate
+                    'RpcOut' = $_.RpcOut
                 }
             }
         }
@@ -363,7 +361,7 @@ function Generate-AsBuiltDoc {
 
             # Set disk properties in document
             $documentContent += "`nh3. Disk Properties`n"
-            $documentContent += "|*Name*|*Label*|*Size (GB)*|*Free Space (GB)*|*Block Size*|`n"
+            $documentContent += "|*Name* |*Label*|*Size (GB)*|*Free Space (GB)*|*Block Size*|`n" # Space after name is required, otherwise Confluence interprests this as a pipe.
             foreach ($disk in $DiskInfo) {
                 $documentContent += "|$($disk.'Name')|$($disk.'Label')|$($disk.'Size (GB)')|$($disk.'Free Space (GB)')|$($disk.'Block Size')|`n"
             }
@@ -493,23 +491,23 @@ function Generate-AsBuiltDoc {
 
             # Set Endpoint properties in document
             $documentContent += "`nh3. Endpoints`n"
-            $documentContent += "|*Database*|*Name*|*Issuer*|*PrivateKeyEncryptionType*|*Start Date*|*Expiration Date*|`n"
-            foreach ($DatabaseCertificate in $DatabaseCertificates) {
-                $documentContent += "|$($DatabaseCertificate.Database)|$($DatabaseCertificate.Name)|$($DatabaseCertificate.Issuer)|$($DatabaseCertificate.PrivateKeyEncryptionType)|$($DatabaseCertificate.StartDate)|$($DatabaseCertificate.ExpirationDate)|`n"
-            }
-
-            # Set Database Certificate properties in document
-            $documentContent += "`nh3. Database Certificates`n"
             $documentContent += "|*Endpoint Type*|*Owner*|*Protocol Type*|*Name*|`n"
             foreach ($Endpoint in $EndpointProperties) {
                 $documentContent += "|$($Endpoint.EndpointType)|$($Endpoint.Owner)|$($Endpoint.ProtocolType)|$($Endpoint.Name)|$($Endpoint.Port)|`n"
             }
 
+            # Set Certificate properties in document
+            $documentContent += "`nh3. Database Certificates`n"
+            $documentContent += "|*Database*|*Name*|*Issuer*|*PrivateKeyEncryptionType*|*Start Date*|*Expiration Date*|`n"
+            foreach ($DatabaseCertificate in $DatabaseCertificates) {
+                $documentContent += "|$($DatabaseCertificate.Database)|$($DatabaseCertificate.Name)|$($DatabaseCertificate.Issuer)|$($DatabaseCertificate.PrivateKeyEncryptionType)|$($DatabaseCertificate.StartDate)|$($DatabaseCertificate.ExpirationDate)|`n"
+            }
+
             # Set Linked Server properties in document
             $documentContent += "`nh3. Linked Servers`n"
-            $documentContent += "|*Linked Server Name*|*Product Name*|*Provider Name*|*Data Source*|*Location*|*Provider String*|*Is Remote Login Enabled*|*Is RPC Out Enabled*|`n"
+            $documentContent += "|*Linked Server Name*|*Product Name*|*Provider Name*|*Data Source*|*Impersonate*|*RpcOut*|`n"
             foreach ($server in $LinkedServers) {
-                $documentContent += "|$($server.'Linked Server Name')|$($server.'Product Name')|$($server.'Provider Name')|$($server.'Data Source')|$($server.'Location')|$($server.'Provider String')|$($server.'Is Remote Login Enabled')|$($server.'Is RPC Out Enabled')|`n"
+                $documentContent += "|$($server.'Linked Server Name')|$($server.'Product Name')|$($server.'Provider Name')|$($server.'Data Source')|$($server.'Impersonate')|$($server.'RpcOut')|`n"
             }
 
             # Generate unique filename with server name and date
