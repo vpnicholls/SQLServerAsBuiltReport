@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Generates an "As Built" document for each SQL Server instance provided.
 
@@ -37,7 +37,6 @@ param (
     [string]$OutputPath = "$env:USERPROFILE\Documents\AsBuiltDocs",
     [string]$ScriptEventLogPath = "$($OutputPath)\Logs",
     [string]$DocumentFormat = "markdown"
-
 )
 
 # Generate log file name with datetime stamp
@@ -48,7 +47,6 @@ function Write-Log {
     param (
         [Parameter(Mandatory=$true)]
         [string]$Message,
-
         [Parameter(Mandatory=$false)]
         [ValidateSet("INFO", "WARNING", "ERROR", "SUCCESS", "DEBUG", "VERBOSE", "FATAL")]
         [string]$Level = "INFO"
@@ -73,20 +71,13 @@ if (-not $HasDomainAccount) {
 $ServerCredentials = @{}
 if (-not $HasDomainAccount) {
     foreach ($instance in $SQLServerInstances) {
-        # Extract server name from instance name
-        $serverName = if ($instance.Contains('\')) {
-            $instance.Split('\')[0]
-        } else {
-            $instance
-        }
-
+        $serverName = if ($instance.Contains('\')) { $instance.Split('\')[0] } else { $instance }
         try {
             $ServerCredentials[$serverName] = Import-Clixml -Path ".\Credentials\$serverName.xml"
             Write-Log -Message "Successfully imported Windows credentials for $serverName." -Level "INFO"
         }
         catch {
             Write-Log -Message "Failed to import Windows credentials for $serverName from .\Credentials\$serverName.xml: $_" -Level "ERROR"
-            # Instead of throwing an error, log it and continue processing other instances if possible
         }
     }
 }
@@ -99,7 +90,6 @@ Function Get-HostServerProperties {
     Param (
         [string]$InstanceName
     )
-
     try {
         Write-Log -Message "Retrieving host server properties for $InstanceName" -Level INFO
         $allProperties = Get-DbaInstanceProperty -SqlInstance $InstanceName
@@ -119,19 +109,14 @@ function Get-SQLServerConfig {
         [Parameter(Mandatory=$true)]
         [string]$InstanceName
     )
-
     try {
         Write-Log -Message "Retrieving configuration for $InstanceName" -Level INFO
         $serverInfo = Get-DbaInstanceProperty -SqlInstance $InstanceName -ErrorAction Stop
         $config = @{}
-        @('VersionString', 'Edition', 'Collation', 'IsClustered')| ForEach-Object {
+        @('VersionString', 'Edition', 'Collation', 'IsClustered') | ForEach-Object {
             $property = $_
             $value = ($serverInfo | Where-Object { $_.Name -eq $property } | Select-Object -ExpandProperty Value -ErrorAction SilentlyContinue)
-            if ($value) {
-                $config[$property] = $value
-            } else {
-                Write-Log -Message "Property $property not found for $InstanceName" -Level WARNING
-            }
+            if ($value) { $config[$property] = $value } else { Write-Log -Message "Property $property not found for $InstanceName" -Level WARNING }
         }
         return $config
     }
@@ -147,20 +132,15 @@ function Get-SQLDatabases {
         [Parameter(Mandatory=$true)]
         [string]$InstanceName
     )
-
     try {
         Write-Log -Message "Retrieving database details for $InstanceName" -Level INFO
         $databases = Get-DbaDatabase -SqlInstance $InstanceName -ErrorAction Stop
-        
         $systemDatabases = $databases | Where-Object { $_.IsSystemObject }
         $userDatabases = $databases | Where-Object { -not $_.IsSystemObject }
-
-        # Function to get detailed info for databases
         function Get-DatabaseDetails {
             param ($db)
             $dbFiles = Get-DbaDbFile -SqlInstance $InstanceName -Database $db.Name
             $totalSizeBytes = ($dbFiles | Measure-Object -Property Size -Sum).Sum
-            
             return @{
                 'Name' = $db.Name
                 'Status' = $db.Status
@@ -176,10 +156,8 @@ function Get-SQLDatabases {
                 'IsAutoUpdateStatisticsEnabled' = $db.AutoUpdateStatisticsEnabled
             }
         }
-
         $systemDbInfo = $systemDatabases | ForEach-Object { Get-DatabaseDetails -db $_ }
         $userDbInfo = $userDatabases | ForEach-Object { Get-DatabaseDetails -db $_ }
-
         return @{
             'SystemDatabases' = $systemDbInfo
             'UserDatabases' = $userDbInfo
@@ -202,23 +180,17 @@ function Add-AgListenerAndDatabaseDetails {
         [Parameter(Mandatory=$true)]
         [System.Management.Automation.PSCredential]$SqlCredential
     )
-
     try {
         Write-Log -Message "Retrieving AG Listener details for $InstanceName" -Level INFO
         $AGLs = Get-DbaAgListener -SqlInstance $InstanceName -SqlCredential $SqlCredential
         $listenerDetails = $AGLs | Select-Object AvailabilityGroup, @{Name='ListenerName';Expression={$_.Name}}, ClusterIPConfiguration, PortNumber
-
         Write-Log -Message "Retrieving AG Database details for $InstanceName" -Level INFO
         $AGDBs = Get-DbaAgDatabase -SqlInstance $InstanceName -SqlCredential $SqlCredential
-
-        # Group databases by Availability Group
         $groupedDatabases = $AGDBs | Group-Object -Property AvailabilityGroup
-
         $details = @{
             'Listeners' = $listenerDetails
             'Databases' = $groupedDatabases
         }
-
         return $details
     }
     catch {
@@ -227,6 +199,67 @@ function Add-AgListenerAndDatabaseDetails {
             'Listeners' = @()
             'Databases' = @()
         }
+    }
+}
+
+# Function to get replication publisher details
+function Get-ReplicationPublisherDetails {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$InstanceName,
+        [System.Management.Automation.PSCredential]$SqlCredential
+    )
+
+    try {
+        Write-Log -Message "Retrieving replication publisher details for $InstanceName" -Level INFO
+
+        # Get all user databases to check for publications
+        $databases = Get-DbaDatabase -SqlInstance $InstanceName -SqlCredential $SqlCredential -ExcludeSystem | Select-Object -ExpandProperty Name
+        Write-Log -Message "Found $($databases.Count) user databases to check for publications: $($databases -join ', ')" -Level DEBUG
+
+        # SQL query for publisher details
+        $pubQuery = @"
+        SELECT 
+            [p].[name] AS [PublicationName],
+            DB_NAME() AS [Database],
+            [p].[snapshot_in_defaultfolder] AS [DefaultSnapshotFolder],
+            [p].[alt_snapshot_folder] AS [AlternateSnapshotFolder]
+        FROM dbo.syspublications AS [p]
+"@
+
+        # Initialize as an empty array to ensure proper accumulation
+        $publisherDetails = @()
+        foreach ($db in $databases) {
+            Write-Log -Message "Checking database '$db' for publications" -Level DEBUG
+            try {
+                $pubs = Invoke-DbaQuery -SqlInstance $InstanceName -SqlCredential $SqlCredential -Database $db -Query $pubQuery -ErrorAction Stop
+                if ($pubs) {
+                    Write-Log -Message "Found $($pubs.Count) publications in '$db': $($pubs.PublicationName -join ', ')" -Level INFO
+                    # Explicitly add each row to the array
+                    $publisherDetails += $pubs
+                }
+            }
+            catch {
+                Write-Log -Message "No publications found in '$db' or not a published database: $_" -Level DEBUG
+            }
+        }
+
+        # Debug: Log the final count and contents
+        Write-Log -Message "Final publisherDetails count: $($publisherDetails.Count)" -Level DEBUG
+        if ($publisherDetails) {
+            # Use -join operator instead of Join-String for PowerShell 5.1 compatibility
+            $pubNames = ($publisherDetails | ForEach-Object { $_.PublicationName }) -join ', '
+            Write-Log -Message "Publisher details collected: $pubNames" -Level DEBUG
+            Write-Log -Message "Detected publisher role with $($publisherDetails.Count) publications" -Level INFO
+        } else {
+            Write-Log -Message "No publisher role detected on $InstanceName" -Level INFO
+        }
+
+        return $publisherDetails
+    }
+    catch {
+        Write-Log -Message "Failed to retrieve replication publisher details for $InstanceName. Error: $_" -Level ERROR
+        return @()
     }
 }
 
@@ -293,7 +326,7 @@ function Generate-AsBuiltDoc {
         # Get Endpoint properties
         $EndpointProperties = try {
             Write-Log -Message "Retrieving Endpoint properties for $instance" -Level INFO
-            Get-DbaEndpoint -SqlInstance $instance -SqlCredential $SqlCredential | where {$_.IsSystemObject -eq $False} -ErrorAction Stop | ForEach-Object {
+            Get-DbaEndpoint -SqlInstance $instance -SqlCredential $SqlCredential | Where-Object {$_.IsSystemObject -eq $False} -ErrorAction Stop | ForEach-Object {
                 @{
                     'EndpointType' = $_.EndpointType
                     'Owner' = $_.Owner
@@ -304,12 +337,13 @@ function Generate-AsBuiltDoc {
             }
         } catch {
             Write-Log -Message "Failed to retrieve Endpoint properties for $instance. Error: $_" -Level ERROR
+            @()
         }
 
         # Get database certificates
         $DatabaseCertificates = try {
             Write-Log -Message "Retrieving Database Certificate properties for $instance" -Level INFO
-            Get-DbaDbCertificate -SqlInstance $instance -SqlCredential $SqlCredential | where {$_.PrivateKeyEncryptionType -ne "NoKey"} -ErrorAction Stop | ForEach-Object {
+            Get-DbaDbCertificate -SqlInstance $instance -SqlCredential $SqlCredential | Where-Object {$_.PrivateKeyEncryptionType -ne "NoKey"} -ErrorAction Stop | ForEach-Object {
                 @{
                     'Database' = $_.Database
                     'Name' = $_.Name
@@ -321,6 +355,7 @@ function Generate-AsBuiltDoc {
             }
         } catch {
             Write-Log -Message "Failed to retrieve Database Certificate properties for $instance. Error: $_" -Level ERROR
+            @()
         }
 
         # Get linked servers
@@ -342,8 +377,11 @@ function Generate-AsBuiltDoc {
             @()
         }
 
+        # Get replication publisher details
+        $publisherDetails = Get-ReplicationPublisherDetails -InstanceName $instance -SqlCredential $SqlCredential
+
         if ($DocumentFormat -eq "markdown") {
-            $documentContent = "h2. SQL Server: $instance @ $(get-date -format "dd MMMM yyyy")`n"
+            $documentContent = "h2. SQL Server: $instance @ $(Get-Date -Format 'dd MMMM yyyy')`n"
 
             # Set host server properties in document
             $documentContent += "`nh3. Host Server Properties`n"
@@ -361,7 +399,7 @@ function Generate-AsBuiltDoc {
 
             # Set disk properties in document
             $documentContent += "`nh3. Disk Properties`n"
-            $documentContent += "|*Name* |*Label*|*Size (GB)*|*Free Space (GB)*|*Block Size*|`n" # Space after name is required, otherwise Confluence interprests this as a pipe.
+            $documentContent += "|*Name* |*Label*|*Size (GB)*|*Free Space (GB)*|*Block Size*|`n"
             foreach ($disk in $DiskInfo) {
                 $documentContent += "|$($disk.'Name')|$($disk.'Label')|$($disk.'Size (GB)')|$($disk.'Free Space (GB)')|$($disk.'Block Size')|`n"
             }
@@ -390,11 +428,7 @@ function Generate-AsBuiltDoc {
                         'Logical Name' = $_.Name
                         'Physical Name' = $_.PhysicalName
                         'Size' = [math]::Round($_.Size / 1MB, 2)  # Size in MB
-                        'Growth' = if ($_.GrowthType -eq 'Percent') {
-                            "$($_.Growth)%"
-                        } else {
-                            "$($_.Growth) MB"
-                        }
+                        'Growth' = if ($_.GrowthType -eq 'Percent') { "$($_.Growth)%" } else { "$($_.Growth) MB" }
                     }
                 }
             }
@@ -424,7 +458,7 @@ function Generate-AsBuiltDoc {
 
             # Get user databases' file properties
             $UserDbFiles = try {
-                Write-Log -Message "Retrieving system database file information for $instance" -Level INFO
+                Write-Log -Message "Retrieving user database file information for $instance" -Level INFO
                 Get-DbaDbFile -SqlInstance $instance -Database (Get-DbaDatabase -SqlInstance $instance | Where-Object {-not $_.IsSystemObject}).Name | ForEach-Object {
                     @{
                         'Database' = $_.Database
@@ -432,16 +466,12 @@ function Generate-AsBuiltDoc {
                         'Logical Name' = $_.Name
                         'Physical Name' = $_.PhysicalName
                         'Size' = [math]::Round($_.Size / 1MB, 2)  # Size in MB
-                        'Growth' = if ($_.GrowthType -eq 'Percent') {
-                            "$($_.Growth)%"
-                        } else {
-                            "$($_.Growth) MB"
-                        }
+                        'Growth' = if ($_.GrowthType -eq 'Percent') { "$($_.Growth)%" } else { "$($_.Growth) MB" }
                     }
                 }
             }
             catch {
-                Write-Log -Message "Failed to retrieve system database file information for $instance. Error: $_" -Level ERROR
+                Write-Log -Message "Failed to retrieve user database file information for $instance. Error: $_" -Level ERROR
                 @()
             }
 
@@ -480,10 +510,9 @@ function Generate-AsBuiltDoc {
                 $documentContent += "`nh3. Availability Group Databases`n"
                 $documentContent += "|*AvailabilityGroup*|*Databases*|*LocalReplicaRole*|*SynchronizationState*|`n"
                 foreach ($group in $agDetails.Databases) {
-                    # Use -join operator instead of Join-String
-                    $databases = ($group.Group | Sort-Object -Property Name | ForEach-Object { $_.Name }) -join ", "
+                    $databasesList = ($group.Group | Sort-Object -Property Name | ForEach-Object { $_.Name }) -join ", "
                     $sampleDb = $group.Group | Select-Object -First 1
-                    $documentContent += "|$($group.Name)|$databases|$($sampleDb.LocalReplicaRole)|$($sampleDb.SynchronizationState)|`n"
+                    $documentContent += "|$($group.Name)|$databasesList|$($sampleDb.LocalReplicaRole)|$($sampleDb.SynchronizationState)|`n"
                 }
             } else {
                 Write-Log -Message "Document format $DocumentFormat not implemented for AG details yet." -Level WARNING
@@ -491,7 +520,7 @@ function Generate-AsBuiltDoc {
 
             # Set Endpoint properties in document
             $documentContent += "`nh3. Endpoints`n"
-            $documentContent += "|*Endpoint Type*|*Owner*|*Protocol Type*|*Name*|`n"
+            $documentContent += "|*Endpoint Type*|*Owner*|*Protocol Type*|*Name*|*Port*|`n"
             foreach ($Endpoint in $EndpointProperties) {
                 $documentContent += "|$($Endpoint.EndpointType)|$($Endpoint.Owner)|$($Endpoint.ProtocolType)|$($Endpoint.Name)|$($Endpoint.Port)|`n"
             }
@@ -510,10 +539,24 @@ function Generate-AsBuiltDoc {
                 $documentContent += "|$($server.'Linked Server Name')|$($server.'Product Name')|$($server.'Provider Name')|$($server.'Data Source')|$($server.'Impersonate')|$($server.'RpcOut')|`n"
             }
 
+            # Set Replication Publisher properties in document
+            $documentContent += "`nh3. Replication Publisher Configuration`n"
+            Write-Log -Message "PublisherDetails count before check: $($publisherDetails.Count)" -Level DEBUG
+            if ($publisherDetails) {
+                Write-Log -Message "Adding publisher table with $($publisherDetails.Count) entries" -Level DEBUG
+                $documentContent += "|*Publication Name*|*Database*|*Default Snapshot Folder*|*Alternate Snapshot Folder*|`n"
+                foreach ($pub in $publisherDetails) {
+                    $documentContent += "|$($pub.PublicationName)|$($pub.Database)|$($pub.DefaultSnapshotFolder)|$($pub.AlternateSnapshotFolder)|`n"
+                }
+            } else {
+                Write-Log -Message "No publisher details to display" -Level DEBUG
+                $documentContent += "No replication publisher configuration detected on this instance.`n"
+            }
+
             # Generate unique filename with server name and date
             $dateStamp = Get-Date -Format "yyyyMMdd"
             $outputFile = Join-Path -Path $OutputPath -ChildPath "$($instance)_$dateStamp.md"
-            $documentContent | Out-File -FilePath $outputFile
+            $documentContent | Out-File -FilePath $outputFile -Encoding UTF8
             Write-Log -Message "Document for $instance saved to $outputFile" -Level SUCCESS
         }
         else {
@@ -527,10 +570,24 @@ function Generate-AsBuiltDoc {
 ######################
 
 Write-Log -Message "Starting SQL Server As Built Document Generation" -Level INFO
-try {
-    Generate-AsBuiltDoc -Instances $SQLServerInstances -OutputPath $OutputPath -DocumentFormat $DocumentFormat
+
+# Ensure output directories exist
+if (-not (Test-Path $OutputPath)) { New-Item -Path $OutputPath -ItemType Directory -Force | Out-Null }
+if (-not (Test-Path $ScriptEventLogPath)) { New-Item -Path $ScriptEventLogPath -ItemType Directory -Force | Out-Null }
+
+foreach ($instance in $SQLServerInstances) {
+    try {
+        # Use stored SqlCredential if no domain account
+        if (-not $HasDomainAccount) {
+            $SqlCredential = Import-Clixml -Path ".\Credentials\SqlCredentials.xml"
+            Write-Log -Message "Successfully imported SQL credentials for $instance" -Level INFO
+        }
+
+        Generate-AsBuiltDoc -Instances $instance -OutputPath $OutputPath -DocumentFormat $DocumentFormat
+    }
+    catch {
+        Write-Log -Message "An error occurred during document generation for $($instance): $_" -Level ERROR
+    }
 }
-catch {
-    Write-Log -Message "An error occurred during document generation: $_" -Level "ERROR"
-}
+
 Write-Log -Message "Finished SQL Server As Built Document Generation" -Level INFO
