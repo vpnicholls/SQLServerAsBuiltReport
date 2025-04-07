@@ -214,7 +214,7 @@ function Get-ReplicationPublisherDetails {
         Write-Log -Message "Retrieving replication publisher details for $InstanceName" -Level INFO
 
         # Get all user databases to check for publications
-        $databases = Get-DbaDatabase -SqlInstance $InstanceName -SqlCredential $SqlCredential -ExcludeSystem | Select-Object -ExpandProperty Name
+        $databases = Get-DbaDatabase -SqlInstance $InstanceName -SqlCredential $SqlCredential -ExcludeSystem | Where-Object { $_.ReplicationOptions -eq "Published" } | Select-Object -ExpandProperty Name
         Write-Log -Message "Found $($databases.Count) user databases to check for publications: $($databases -join ', ')" -Level DEBUG
 
         # SQL query for publisher details
