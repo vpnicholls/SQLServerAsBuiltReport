@@ -371,25 +371,28 @@ function Get-ReplicationSubscriptionDetails {
         $distributorInfo = Get-DbaRepDistributor -SqlInstance $InstanceName -SqlCredential $SqlCredential
         $isDistributor = $distributorInfo -and $distributorInfo.IsDistributor -eq $true
 
+        if (-not $isDistributor) {
+            Write-Log -Message "Instance $InstanceName is not a Distributor; skipping subscription details" -Level INFO
+            return $null
+        }
+
         # Initialize subscription collection
         $subscriptions = @()
 
-        if ($isDistributor) {
-            # Try getting subscriptions from the Distributor
-            $subscriptions = Get-DbaReplSubscription -SqlInstance $InstanceName -SqlCredential $SqlCredential | 
-                Select-Object PublicationName, SubscriptionType, DatabaseName, SubscriptionDBName
-            
-            if (-not $subscriptions -and $DistributorDetails -and $DistributorDetails.Publishers) {
-                # If no subscriptions found on Distributor, query each Publisher
-                Write-Log -Message "No subscriptions found on Distributor $InstanceName, checking Publishers" -Level INFO
-                foreach ($pub in $DistributorDetails.Publishers | Where-Object { $_.PublisherName -ne "None" }) {
-                    $pubInstance = $pub.PublisherName
-                    Write-Log -Message "Querying subscriptions from Publisher $pubInstance" -Level DEBUG
-                    $pubSubs = Get-DbaReplSubscription -SqlInstance $pubInstance -SqlCredential $SqlCredential -ErrorAction Stop | 
-                        Select-Object PublicationName, SubscriptionType, DatabaseName, SubscriptionDBName
-                    if ($pubSubs) {
-                        $subscriptions += $pubSubs
-                    }
+        # Try getting subscriptions from the Distributor
+        $subscriptions = Get-DbaReplSubscription -SqlInstance $InstanceName -SqlCredential $SqlCredential | 
+            Select-Object PublicationName, SubscriptionType, DatabaseName, SubscriptionDBName
+        
+        if (-not $subscriptions -and $DistributorDetails -and $DistributorDetails.Publishers) {
+            # If no subscriptions found on Distributor, query each Publisher
+            Write-Log -Message "No subscriptions found on Distributor $InstanceName, checking Publishers" -Level INFO
+            foreach ($pub in $DistributorDetails.Publishers | Where-Object { $_.PublisherName -ne "None" }) {
+                $pubInstance = $pub.PublisherName
+                Write-Log -Message "Querying subscriptions from Publisher $pubInstance" -Level DEBUG
+                $pubSubs = Get-DbaReplSubscription -SqlInstance $pubInstance -SqlCredential $SqlCredential -ErrorAction Stop | 
+                    Select-Object PublicationName, SubscriptionType, DatabaseName, SubscriptionDBName
+                if ($pubSubs) {
+                    $subscriptions += $pubSubs
                 }
             }
         }
