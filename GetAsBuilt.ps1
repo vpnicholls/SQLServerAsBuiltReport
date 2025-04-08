@@ -213,9 +213,11 @@ function Get-ReplicationPublisherDetails {
     try {
         Write-Log -Message "Retrieving replication publisher details for $InstanceName" -Level INFO
 
-        # Get all user databases to check for publications
-        $databases = Get-DbaDatabase -SqlInstance $InstanceName -SqlCredential $SqlCredential -ExcludeSystem | Where-Object { $_.ReplicationOptions -eq "Published" } | Select-Object -ExpandProperty Name
-        Write-Log -Message "Found $($databases.Count) user databases to check for publications: $($databases -join ', ')" -Level DEBUG
+        # Get only user databases that are published
+        $publishedDatabases = Get-DbaDatabase -SqlInstance $InstanceName -SqlCredential $SqlCredential -ExcludeSystem | 
+            Where-Object { $_.ReplicationOptions -eq "Published" } | 
+            Select-Object -ExpandProperty Name
+        Write-Log -Message "Found $($publishedDatabases.Count) published user databases: $($publishedDatabases -join ', ')" -Level DEBUG
 
         # SQL query for publisher details
         $pubQuery = @"
@@ -227,27 +229,20 @@ function Get-ReplicationPublisherDetails {
         FROM dbo.syspublications AS [p]
 "@
 
-        # Initialize as an empty array to ensure proper accumulation
+        # Initialize as an empty array
         $publisherDetails = @()
-        foreach ($db in $databases) {
+        foreach ($db in $publishedDatabases) {
             Write-Log -Message "Checking database '$db' for publications" -Level DEBUG
-            try {
-                $pubs = Invoke-DbaQuery -SqlInstance $InstanceName -SqlCredential $SqlCredential -Database $db -Query $pubQuery -ErrorAction Stop
-                if ($pubs) {
-                    Write-Log -Message "Found $($pubs.Count) publications in '$db': $($pubs.PublicationName -join ', ')" -Level INFO
-                    # Explicitly add each row to the array
-                    $publisherDetails += $pubs
-                }
-            }
-            catch {
-                Write-Log -Message "No publications found in '$db' or not a published database: $_" -Level DEBUG
+            $pubs = Invoke-DbaQuery -SqlInstance $InstanceName -SqlCredential $SqlCredential -Database $db -Query $pubQuery -ErrorAction Stop
+            if ($pubs) {
+                Write-Log -Message "Found $($pubs.Count) publications in '$db': $($pubs.PublicationName -join ', ')" -Level INFO
+                $publisherDetails += $pubs
             }
         }
 
-        # Debug: Log the final count and contents
+        # Log final results
         Write-Log -Message "Final publisherDetails count: $($publisherDetails.Count)" -Level DEBUG
         if ($publisherDetails) {
-            # Use -join operator instead of Join-String for PowerShell 5.1 compatibility
             $pubNames = ($publisherDetails | ForEach-Object { $_.PublicationName }) -join ', '
             Write-Log -Message "Publisher details collected: $pubNames" -Level DEBUG
             Write-Log -Message "Detected publisher role with $($publisherDetails.Count) publications" -Level INFO
@@ -260,6 +255,184 @@ function Get-ReplicationPublisherDetails {
     catch {
         Write-Log -Message "Failed to retrieve replication publisher details for $InstanceName. Error: $_" -Level ERROR
         return @()
+    }
+}
+
+# Function to get replication distributor details
+function Get-ReplicationDistributorDetails {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$InstanceName,
+        [System.Management.Automation.PSCredential]$SqlCredential
+    )
+
+    try {
+        Write-Log -Message "Retrieving replication distributor details for $InstanceName" -Level INFO
+
+        # Check if this instance is a distributor using dbatools
+        $distributorInfo = Get-DbaRepDistributor -SqlInstance $InstanceName -SqlCredential $SqlCredential
+        if (-not $distributorInfo -or $distributorInfo.IsDistributor -ne $true) {
+            Write-Log -Message "No distributor role detected on $InstanceName" -Level INFO
+            return $null
+        }
+
+        # Log distributor detection
+        Write-Log -Message "Distributor role detected on $InstanceName" -Level INFO
+
+        # Get distribution database name
+        $distDbQuery = @"
+        SELECT name AS DistributionDatabase
+        FROM master.sys.databases
+        WHERE is_distributor = 1
+"@
+        $distDb = Invoke-DbaQuery -SqlInstance $InstanceName -SqlCredential $SqlCredential -Database master -Query $distDbQuery -ErrorAction Stop
+        if (-not $distDb) {
+            Write-Log -Message "No distribution database found in master.sys.databases" -Level WARNING
+            return $null
+        }
+        $distDbName = $distDb.DistributionDatabase
+
+        # Get publishers from MSdistpublishers
+        $publishersQuery = @"
+        SELECT [name] AS PublisherName
+        FROM msdb.dbo.MSdistpublishers
+        WHERE active = 1
+"@
+        $publishers = Invoke-DbaQuery -SqlInstance $InstanceName -SqlCredential $SqlCredential -Database msdb -Query $publishersQuery -ErrorAction Stop
+
+        # Get publications from MSpublications in the distribution database
+        $publicationsQuery = @"
+        SELECT 
+            publication AS PublicationName,
+            publisher_db AS PublisherDatabase,
+            CASE 
+                WHEN EXISTS (SELECT 1 FROM msdb.dbo.MSdistpublishers mp WHERE mp.name = '$($publishers.PublisherName)' AND mp.active = 1)
+                THEN '$($publishers.PublisherName)'
+                ELSE 'Unknown'
+            END AS PublisherName
+        FROM [$distDbName].dbo.MSpublications
+"@
+        $publications = Invoke-DbaQuery -SqlInstance $InstanceName -SqlCredential $SqlCredential -Database $distDbName -Query $publicationsQuery -ErrorAction Stop
+
+        if (-not $publishers -and -not $publications) {
+            Write-Log -Message "No active publishers or publications found for $InstanceName" -Level INFO
+            $distributorDetails = [PSCustomObject]@{
+                Publishers = @([PSCustomObject]@{ PublisherName = "None"; PublicationName = "None" })
+            }
+        } else {
+            # Compile details, prioritizing publications and falling back to publishers without publications
+            $pubList = @()
+            if ($publications) {
+                $pubList = $publications | ForEach-Object {
+                    [PSCustomObject]@{
+                        PublisherName = $_.PublisherName
+                        PublicationName = $_.PublicationName
+                    }
+                }
+            } else {
+                # If no publications, list publishers with "None"
+                $pubList = $publishers | ForEach-Object {
+                    [PSCustomObject]@{
+                        PublisherName = $_.PublisherName
+                        PublicationName = "None"
+                    }
+                }
+            }
+
+            $distributorDetails = [PSCustomObject]@{
+                Publishers = $pubList
+            }
+        }
+
+        Write-Log -Message "Distributor details collected: $(($distributorDetails.Publishers | ForEach-Object { "$($_.PublisherName):$($_.PublicationName)" }) -join ', ')" -Level DEBUG
+        Write-Log -Message "Detected distributor role with $(($distributorDetails.Publishers).Count) publisher entries" -Level INFO
+
+        return $distributorDetails
+    }
+    catch {
+        Write-Log -Message "Failed to retrieve replication distributor details for $InstanceName. Error: $_" -Level ERROR
+        return $null
+    }
+}
+
+# Function to get replication subscriber details
+function Get-ReplicationSubscriptionDetails {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$InstanceName,
+        [System.Management.Automation.PSCredential]$SqlCredential,
+        [PSCustomObject]$DistributorDetails
+    )
+
+    try {
+        Write-Log -Message "Retrieving replication subscription details for $InstanceName" -Level INFO
+
+        # Check if this instance is a distributor
+        $distributorInfo = Get-DbaRepDistributor -SqlInstance $InstanceName -SqlCredential $SqlCredential
+        $isDistributor = $distributorInfo -and $distributorInfo.IsDistributor -eq $true
+
+        # Initialize subscription collection
+        $subscriptions = @()
+
+        if ($isDistributor) {
+            # Try getting subscriptions from the Distributor
+            $subscriptions = Get-DbaReplSubscription -SqlInstance $InstanceName -SqlCredential $SqlCredential | 
+                Select-Object PublicationName, SubscriptionType, DatabaseName, SubscriptionDBName
+            
+            if (-not $subscriptions -and $DistributorDetails -and $DistributorDetails.Publishers) {
+                # If no subscriptions found on Distributor, query each Publisher
+                Write-Log -Message "No subscriptions found on Distributor $InstanceName, checking Publishers" -Level INFO
+                foreach ($pub in $DistributorDetails.Publishers | Where-Object { $_.PublisherName -ne "None" }) {
+                    $pubInstance = $pub.PublisherName
+                    Write-Log -Message "Querying subscriptions from Publisher $pubInstance" -Level DEBUG
+                    $pubSubs = Get-DbaReplSubscription -SqlInstance $pubInstance -SqlCredential $SqlCredential -ErrorAction Stop | 
+                        Select-Object PublicationName, SubscriptionType, DatabaseName, SubscriptionDBName
+                    if ($pubSubs) {
+                        $subscriptions += $pubSubs
+                    }
+                }
+            }
+        }
+
+        if (-not $subscriptions) {
+            Write-Log -Message "No subscriptions found for $InstanceName or its Publishers" -Level INFO
+            $subscriptionDetails = [PSCustomObject]@{
+                Subscriptions = @([PSCustomObject]@{
+                    PublisherName = "None"
+                    PublicationName = "None"
+                    SubscriptionType = "None"
+                    DatabaseName = "None"
+                    SubscriptionDBName = "None"
+                })
+            }
+        } else {
+            # Cross-reference with DistributorDetails to add PublisherName
+            $subscriptionDetails = [PSCustomObject]@{
+                Subscriptions = $subscriptions | ForEach-Object {
+                    $pubName = $_.PublicationName
+                    $publisher = if ($DistributorDetails -and $DistributorDetails.Publishers) {
+                        $matchingPub = $DistributorDetails.Publishers | Where-Object { $_.PublicationName -eq $pubName }
+                        if ($matchingPub) { $matchingPub.PublisherName } else { "Unknown" }
+                    } else { "Unknown" }
+                    [PSCustomObject]@{
+                        PublisherName = $publisher
+                        PublicationName = $_.PublicationName
+                        SubscriptionType = $_.SubscriptionType
+                        DatabaseName = $_.DatabaseName
+                        SubscriptionDBName = $_.SubscriptionDBName
+                    }
+                }
+            }
+        }
+
+        Write-Log -Message "Subscription details collected: $(($subscriptionDetails.Subscriptions | ForEach-Object { "$($_.PublisherName):$($_.PublicationName):$($_.SubscriptionDBName)" }) -join ', ')" -Level DEBUG
+        Write-Log -Message "Detected $(($subscriptionDetails.Subscriptions).Count) subscription entries" -Level INFO
+
+        return $subscriptionDetails
+    }
+    catch {
+        Write-Log -Message "Failed to retrieve replication subscription details for $InstanceName. Error: $_" -Level ERROR
+        return $null
     }
 }
 
@@ -379,6 +552,13 @@ function Generate-AsBuiltDoc {
 
         # Get replication publisher details
         $publisherDetails = Get-ReplicationPublisherDetails -InstanceName $instance -SqlCredential $SqlCredential
+
+        # Get replication distributor details
+        $distributorDetails = Get-ReplicationDistributorDetails -InstanceName $instance -SqlCredential $SqlCredential
+
+        # Get replication subscription details
+        $subscriptionDetails = Get-ReplicationSubscriptionDetails -InstanceName $instance -SqlCredential $SqlCredential -DistributorDetails $distributorDetails
+
 
         if ($DocumentFormat -eq "markdown") {
             $documentContent = "h2. SQL Server: $instance @ $(Get-Date -Format 'dd MMMM yyyy')`n"
@@ -551,6 +731,32 @@ function Generate-AsBuiltDoc {
             } else {
                 Write-Log -Message "No publisher details to display" -Level DEBUG
                 $documentContent += "No replication publisher configuration detected on this instance.`n"
+            }
+
+            # Set Replication Distributor properties in document
+            $documentContent += "`nh3. Replication Distributor Configuration`n"
+            if ($distributorDetails) {
+                Write-Log -Message "Adding distributor table with details" -Level DEBUG
+                $documentContent += "|*Publisher*|*Publication*|`n"
+                foreach ($pub in $distributorDetails.Publishers) {
+                    $documentContent += "|$($pub.PublisherName)|$($pub.PublicationName)|`n"
+                }
+            } else {
+                Write-Log -Message "No distributor details to display" -Level DEBUG
+                $documentContent += "No replication distributor configuration detected on this instance.`n"
+            }
+
+            # Set Replication Subscription properties in document
+            $documentContent += "`nh3. Replication Subscription Configuration`n"
+            if ($subscriptionDetails) {
+                Write-Log -Message "Adding subscription table with details" -Level DEBUG
+                $documentContent += "|*Publisher*|*Publication*|*Subscription Type*|*Database Name*|*Subscription DB Name*|`n"
+                foreach ($sub in $subscriptionDetails.Subscriptions) {
+                    $documentContent += "|$($sub.PublisherName)|$($sub.PublicationName)|$($sub.SubscriptionType)|$($sub.DatabaseName)|$($sub.SubscriptionDBName)|`n"
+                }
+            } else {
+                Write-Log -Message "No subscription details to display" -Level DEBUG
+                $documentContent += "No replication subscription configuration detected on this instance.`n"
             }
 
             # Generate unique filename with server name and date
