@@ -773,13 +773,19 @@ function Generate-AsBuiltDoc {
             }
 
             # Set Database Mail properties in document
+            $documentContent += "`nh3. Database Mail Configuration`n"
             if ($mailDetails -and ($mailDetails.Accounts -or $mailDetails.Profiles -or $mailDetails.Servers -or $mailDetails.Config)) {
                 # Mail Accounts
                 $documentContent += "`nh4. Mail Accounts`n"
                 if ($mailDetails.Accounts) {
                     $documentContent += "|*Name*|*Email Address*|*Display Name*|*Reply-To Address*|*SMTP Server*|`n"
                     foreach ($account in $mailDetails.Accounts) {
-                        $documentContent += "|$($account.Name)|$($account.EmailAddress)|$($account.DisplayName)|$($account.ReplyToAddress)|$($account.SmtpServer)|`n"
+                        $name = if ([string]::IsNullOrEmpty($account.Name)) { "N/A " } else { $account.Name }
+                        $email = if ([string]::IsNullOrEmpty($account.EmailAddress)) { "N/A " } else { $account.EmailAddress }
+                        $displayName = if ([string]::IsNullOrEmpty($account.DisplayName)) { "N/A " } else { $account.DisplayName }
+                        $replyTo = if ([string]::IsNullOrEmpty($account.ReplyToAddress)) { "N/A " } else { $account.ReplyToAddress }
+                        $smtpServer = if ([string]::IsNullOrEmpty($account.SmtpServer)) { "N/A " } else { $account.SmtpServer }
+                        $documentContent += "|$name|$email|$displayName|$replyTo|$smtpServer|`n"
                     }
                 } else {
                     $documentContent += "No mail accounts configured.`n"
@@ -790,7 +796,10 @@ function Generate-AsBuiltDoc {
                 if ($mailDetails.Profiles) {
                     $documentContent += "|*Name*|*Description*|*Is Default*|`n"
                     foreach ($profile in $mailDetails.Profiles) {
-                        $documentContent += "|$($profile.Name)|$($profile.Description)|$($profile.IsDefault)|`n"
+                        $name = if ([string]::IsNullOrEmpty($profile.Name)) { "N/A " } else { $profile.Name }
+                        $description = if ([string]::IsNullOrEmpty($profile.Description)) { "N/A " } else { $profile.Description }
+                        $isDefault = if ([string]::IsNullOrEmpty($profile.IsDefault)) { "N/A " } else { $profile.IsDefault }
+                        $documentContent += "|$name|$description|$isDefault|`n"
                     }
                 } else {
                     $documentContent += "No mail profiles configured.`n"
@@ -801,13 +810,18 @@ function Generate-AsBuiltDoc {
                 if ($mailDetails.Servers) {
                     $documentContent += "|*Account Name*|*Server Name*|*Port*|*Enable SSL*|*Authentication Type*|`n"
                     foreach ($server in $mailDetails.Servers) {
-                        $documentContent += "|$($server.AccountName)|$($server.ServerName)|$($server.Port)|$($server.EnableSsl)|$($server.AuthenticationType)|`n"
+                        $accountName = if ([string]::IsNullOrEmpty($server.AccountName)) { "N/A " } else { $server.AccountName }
+                        $serverName = if ([string]::IsNullOrEmpty($server.ServerName)) { "N/A " } else { $server.ServerName }
+                        $port = if ([string]::IsNullOrEmpty($server.Port)) { "N/A " } else { $server.Port }
+                        $enableSsl = if ([string]::IsNullOrEmpty($server.EnableSsl)) { "N/A " } else { $server.EnableSsl }
+                        $authType = if ([string]::IsNullOrEmpty($server.AuthenticationType)) { "N/A " } else { $server.AuthenticationType }
+                        $documentContent += "|$accountName|$serverName|$port|$enableSsl|$authType|`n"
                     }
                 } else {
                     $documentContent += "No mail servers configured.`n"
                 }
 
-                # Mail Configuration (optional)
+                # Mail Configuration Settings (unchanged, as it’s less likely to have blank values)
                 $documentContent += "`nh4. Mail Configuration Settings`n"
                 if ($mailDetails.Config) {
                     $documentContent += "|*Name*|*Value*|`n"
