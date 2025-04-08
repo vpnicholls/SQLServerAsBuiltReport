@@ -202,6 +202,53 @@ function Add-AgListenerAndDatabaseDetails {
     }
 }
 
+function Get-DatabaseMailDetails {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$InstanceName,
+        [System.Management.Automation.PSCredential]$SqlCredential
+    )
+
+    try {
+        Write-Log -Message "Retrieving Database Mail details for $InstanceName" -Level INFO
+
+        # Get Mail Accounts
+        $mailAccounts = Get-DbaDbMailAccount -SqlInstance $InstanceName -SqlCredential $SqlCredential | 
+            Select-Object Name, EmailAddress, DisplayName, ReplyToAddress, @{Name='SmtpServer';Expression={$_.MailServers.ServerName}}
+
+        # Get Mail Profiles
+        $mailProfiles = Get-DbaDbMailProfile -SqlInstance $InstanceName -SqlCredential $SqlCredential | 
+            Select-Object Name, Description, IsDefault
+
+        # Get Mail Servers (linked to accounts)
+        $mailServers = Get-DbaDbMailServer -SqlInstance $InstanceName -SqlCredential $SqlCredential | 
+            Select-Object AccountName, ServerName, Port, EnableSsl, @{Name='AuthenticationType';Expression={$_.AuthenticationType.ToString()}}
+
+        # Get Mail Configuration (optional, for key settings)
+        $mailConfig = Get-DbaDbMailConfig -SqlInstance $InstanceName -SqlCredential $SqlCredential | 
+            Select-Object Name, Value
+
+        if (-not $mailAccounts -and -not $mailProfiles -and -not $mailServers) {
+            Write-Log -Message "No Database Mail configuration detected on $InstanceName" -Level INFO
+            return $null
+        }
+
+        $mailDetails = [PSCustomObject]@{
+            Accounts = $mailAccounts
+            Profiles = $mailProfiles
+            Servers = $mailServers
+            Config = $mailConfig
+        }
+
+        Write-Log -Message "Database Mail details collected: $($mailAccounts.Count) accounts, $($mailProfiles.Count) profiles, $($mailServers.Count) servers" -Level DEBUG
+        return $mailDetails
+    }
+    catch {
+        Write-Log -Message "Failed to retrieve Database Mail details for $InstanceName. Error: $_" -Level ERROR
+        return $null
+    }
+}
+
 # Function to get replication publisher details
 function Get-ReplicationPublisherDetails {
     param (
@@ -553,6 +600,9 @@ function Generate-AsBuiltDoc {
             @()
         }
 
+        # Get Database Mail details
+        $mailDetails = Get-DatabaseMailDetails -InstanceName $instance -SqlCredential $SqlCredential
+
         # Get replication publisher details
         $publisherDetails = Get-ReplicationPublisherDetails -InstanceName $instance -SqlCredential $SqlCredential
 
@@ -720,6 +770,56 @@ function Generate-AsBuiltDoc {
             $documentContent += "|*Linked Server Name*|*Product Name*|*Provider Name*|*Data Source*|*Impersonate*|*RpcOut*|`n"
             foreach ($server in $LinkedServers) {
                 $documentContent += "|$($server.'Linked Server Name')|$($server.'Product Name')|$($server.'Provider Name')|$($server.'Data Source')|$($server.'Impersonate')|$($server.'RpcOut')|`n"
+            }
+
+            # Set Database Mail properties in document
+            if ($mailDetails -and ($mailDetails.Accounts -or $mailDetails.Profiles -or $mailDetails.Servers -or $mailDetails.Config)) {
+                # Mail Accounts
+                $documentContent += "`nh4. Mail Accounts`n"
+                if ($mailDetails.Accounts) {
+                    $documentContent += "|*Name*|*Email Address*|*Display Name*|*Reply-To Address*|*SMTP Server*|`n"
+                    foreach ($account in $mailDetails.Accounts) {
+                        $documentContent += "|$($account.Name)|$($account.EmailAddress)|$($account.DisplayName)|$($account.ReplyToAddress)|$($account.SmtpServer)|`n"
+                    }
+                } else {
+                    $documentContent += "No mail accounts configured.`n"
+                }
+
+                # Mail Profiles
+                $documentContent += "`nh4. Mail Profiles`n"
+                if ($mailDetails.Profiles) {
+                    $documentContent += "|*Name*|*Description*|*Is Default*|`n"
+                    foreach ($profile in $mailDetails.Profiles) {
+                        $documentContent += "|$($profile.Name)|$($profile.Description)|$($profile.IsDefault)|`n"
+                    }
+                } else {
+                    $documentContent += "No mail profiles configured.`n"
+                }
+
+                # Mail Servers
+                $documentContent += "`nh4. Mail Servers`n"
+                if ($mailDetails.Servers) {
+                    $documentContent += "|*Account Name*|*Server Name*|*Port*|*Enable SSL*|*Authentication Type*|`n"
+                    foreach ($server in $mailDetails.Servers) {
+                        $documentContent += "|$($server.AccountName)|$($server.ServerName)|$($server.Port)|$($server.EnableSsl)|$($server.AuthenticationType)|`n"
+                    }
+                } else {
+                    $documentContent += "No mail servers configured.`n"
+                }
+
+                # Mail Configuration (optional)
+                $documentContent += "`nh4. Mail Configuration Settings`n"
+                if ($mailDetails.Config) {
+                    $documentContent += "|*Name*|*Value*|`n"
+                    foreach ($config in $mailDetails.Config) {
+                        $documentContent += "|$($config.Name)|$($config.Value)|`n"
+                    }
+                } else {
+                    $documentContent += "No additional configuration settings found.`n"
+                }
+            } else {
+                Write-Log -Message "No Database Mail details to display" -Level DEBUG
+                $documentContent += "No Database Mail configuration detected on this instance.`n"
             }
 
             # Set Replication Publisher properties in document
