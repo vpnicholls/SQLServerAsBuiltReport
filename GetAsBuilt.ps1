@@ -632,9 +632,9 @@ function Generate-AsBuiltDoc {
 
             # Set disk properties in document
             $documentContent += "`nh3. Disk Properties`n"
-            $documentContent += "|*Name* |*Label*|*Size (GB)*|*Free Space (GB)*|*Block Size*|`n"
+            $documentContent += "|*Name* |*Label*|*Size (GB)*|*Free Space (GB)*|*Block Size (KB)*|`n"
             foreach ($disk in $DiskInfo) {
-                $documentContent += "|$($disk.'Name')|$($disk.'Label')|$($disk.'Size (GB)')|$($disk.'Free Space (GB)')|$($disk.'Block Size')|`n"
+                $documentContent += "|$($disk.'Name') |$($disk.'Label')|$($disk.'Size (GB)')|$($disk.'Free Space (GB)')|$($disk.'Block Size')|`n"
             }
 
             # Set service properties in document
@@ -657,8 +657,8 @@ function Generate-AsBuiltDoc {
                 Get-DbaDbFile -SqlInstance $instance -Database (Get-DbaDatabase -SqlInstance $instance | Where-Object {$_.IsSystemObject}).Name | ForEach-Object {
                     @{
                         'Database' = $_.Database
-                        'File Type' = $_.Type
-                        'Logical Name' = $_.Name
+                        'File Type' = $_.TypeDescription
+                        'Logical Name' = $_.LogicalName
                         'Physical Name' = $_.PhysicalName
                         'Size' = [math]::Round($_.Size / 1MB, 2)  # Size in MB
                         'Growth' = if ($_.GrowthType -eq 'Percent') { "$($_.Growth)%" } else { "$($_.Growth) MB" }
@@ -695,8 +695,8 @@ function Generate-AsBuiltDoc {
                 Get-DbaDbFile -SqlInstance $instance -Database (Get-DbaDatabase -SqlInstance $instance | Where-Object {-not $_.IsSystemObject}).Name | ForEach-Object {
                     @{
                         'Database' = $_.Database
-                        'File Type' = $_.Type
-                        'Logical Name' = $_.Name
+                        'File Type' = $_.TypeDescription
+                        'Logical Name' = $_.LogicalName
                         'Physical Name' = $_.PhysicalName
                         'Size' = [math]::Round($_.Size / 1MB, 2)  # Size in MB
                         'Growth' = if ($_.GrowthType -eq 'Percent') { "$($_.Growth)%" } else { "$($_.Growth) MB" }
