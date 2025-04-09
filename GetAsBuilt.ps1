@@ -516,7 +516,11 @@ function Generate-AsBuiltDoc {
         $databases = Get-SQLDatabases -InstanceName $instance
         
         # Get disk properties
-        $DiskInfo = Get-CimInstance -ClassName Win32_Volume | Where-Object {($_.DriveLetter).Length -eq 2} | ForEach-Object {
+        $DiskInfo = Get-CimInstance -ClassName Win32_Volume | Where-Object { 
+            ($_.DriveLetter).Length -eq 2 -and 
+            $_.Capacity -ne $null -and 
+            $_.Capacity -gt 0 
+        } | ForEach-Object {
             $diskData = @{
                 'Name' = $_.Name
                 'Label' = if ($_.Name -eq 'C:\' -and [string]::IsNullOrEmpty($_.Label)) { 'OS' } else { $_.Label }
