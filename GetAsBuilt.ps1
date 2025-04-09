@@ -299,7 +299,10 @@ function Get-ReplicationPublisherDetails {
         $publisherDetails = @()
         foreach ($db in $publishedDatabases) {
             Write-Log -Message "Checking database '$db' for publications" -Level DEBUG
-            $pubs = Invoke-DbaQuery -SqlInstance $InstanceName -SqlCredential $SqlCredential -Database $db -Query $pubQuery -ErrorAction Stop
+            $pubs = Invoke-DbaQuery -SqlInstance $InstanceName -SqlCredential $SqlCredential -Database $db -Query $pubQuery -WarningAction SilentlyContinue -ErrorAction Stop
+            if (-not $pubs) {
+                Write-Log -Message "Database '$db' on $InstanceName is not readable for replication details (likely an AG secondary)" -Level INFO
+            }
             if ($pubs) {
                 Write-Log -Message "Found $($pubs.Count) publications in '$db': $($pubs.PublicationName -join ', ')" -Level INFO
                 $publisherDetails += $pubs
@@ -311,7 +314,7 @@ function Get-ReplicationPublisherDetails {
         if ($publisherDetails) {
             $pubNames = ($publisherDetails | ForEach-Object { $_.PublicationName }) -join ', '
             Write-Log -Message "Publisher details collected: $pubNames" -Level DEBUG
-            Write-Log -Message "Detected publisher role with $($publisherDetails.Count) publications" -Level INFO
+            Write-Log -Message "Detected publisher role with $($publisherDetails.Count) publications⁠" -Level INFO
         } else {
             Write-Log -Message "No publisher role detected on $InstanceName" -Level INFO
         }
@@ -664,9 +667,10 @@ function Generate-AsBuiltDoc {
         # Get user databases' file properties
         $UserDbFiles = try {
             Write-Log -Message "Retrieving user database file information for $instance" -Level INFO
-            Get-DbaDbFile -SqlInstance $instance -Database (Get-DbaDatabase -SqlInstance $instance | Where-Object {-not $_.IsSystemObject}).Name | ForEach-Object {
-                $sizeMB = [math]::Round($_.Size.Megabyte, 2)  # Already in MB
-                $growthValue = if ($_.GrowthType -eq 'Percent') { "$($_.Growth)%" } else { [math]::Round($_.Growth / 1024, 2) }  # KB to MB
+            $userDbs = Get-DbaDatabase -SqlInstance $instance | Where-Object {-not $_.IsSystemObject}
+            $files = Get-DbaDbFile -SqlInstance $instance -Database $userDbs.Name -WarningAction SilentlyContinue | ForEach-Object {
+                $sizeMB = [math]::Round($_.Size.Megabyte, 2)
+                $growthValue = if ($_.GrowthType -eq 'Percent') { "$($_.Growth)%" } else { [math]::Round($_.Growth / 1024, 2) }
                 Write-Log -Message "Raw data for $($_.LogicalName): Size = $($_.Size.Megabyte) MB, Growth = $($_.Growth), GrowthType = $($_.GrowthType), Converted Size = $sizeMB MB, Converted Growth = $growthValue" -Level DEBUG
                 @{
                     'Database' = $_.Database
@@ -677,6 +681,10 @@ function Generate-AsBuiltDoc {
                     'Growth' = $growthValue
                 }
             }
+            if (-not $files -and $userDbs) {
+                Write-Log -Message "No readable user database files retrieved from $instance. (Databases may be Availability Group secondaries)." -Level INFO
+            }
+            $files
         }
         catch {
             Write-Log -Message "Failed to retrieve user database file information for $instance. Error: $_" -Level ERROR
@@ -810,7 +818,7 @@ function Generate-AsBuiltDoc {
                     $documentContent += "|$($file.'Database')|$($file.'File Type')|$($file.'Logical Name')|$($file.'Physical Name')|$sizeValue|$growthValue|`n"
                 }
             } else {
-                $documentContent += "No readable user database configuration detected on this instance. Refer to the primary database for these details.`n"
+                $documentContent += "No readable user database configuration detected on this instance. Databases may be Availability Group secondaries.`n"
             }
 
             # Set Availability Group properties in document
