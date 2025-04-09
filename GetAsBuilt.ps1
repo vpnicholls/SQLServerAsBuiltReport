@@ -588,7 +588,12 @@ function Generate-AsBuiltDoc {
         # Get database certificates
         $DatabaseCertificates = try {
             Write-Log -Message "Retrieving Database Certificate properties for $instance" -Level INFO
-            Get-DbaDbCertificate -SqlInstance $instance -SqlCredential $SqlCredential | Where-Object {$_.PrivateKeyEncryptionType -ne "NoKey"} -ErrorAction Stop | ForEach-Object {
+            $certificates = Get-DbaDbCertificate -SqlInstance $instance -SqlCredential $SqlCredential -WarningAction SilentlyContinue | Where-Object {$_.PrivateKeyEncryptionType -ne "NoKey"} -ErrorAction Stop
+            if (-not $certificates) {
+                Write-Log -Message "No readable database certificates detected on $instance (databases may be AG secondaries)" -Level INFO
+            }
+            $certificates | ForEach-Object {
+                Write-Log -Message "Retrieved certificate '$($_.Name)' from database '$($_.Database)' on $instance" -Level DEBUG
                 @{
                     'Database' = $_.Database
                     'Name' = $_.Name
