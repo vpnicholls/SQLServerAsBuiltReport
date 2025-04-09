@@ -145,10 +145,10 @@ function Get-SQLDatabases {
                 'Name' = $db.Name
                 'Status' = $db.Status
                 'RecoveryModel' = $db.RecoveryModel
-                'CompatibilityLevel' = $db.Compatibility
+                'CompatibilityLevel' = $db.Compatibility -replace 'Version',''  # Remove "Version" from the value
                 'Owner' = $db.Owner
                 'CreationDate' = $db.CreateDate.ToString("yyyy-MM-dd HH:mm:ss")
-                'LastBackupDate' = if ($db.LastBackupDate) { $db.LastBackupDate.ToString("yyyy-MM-dd HH:mm:ss") } else { "Never" }
+                'LastBackupDate' = if ($db.Name -eq 'tempdb') { "N/A " } elseif ($db.LastBackupDate) { $db.LastBackupDate.ToString("yyyy-MM-dd HH:mm:ss") } else { "Never" }
                 'AutoClose' = $db.AutoClose
                 'AutoShrink' = $db.AutoShrink
                 'IsReadCommittedSnapshotOn' = $db.IsReadCommittedSnapshotOn
@@ -183,7 +183,17 @@ function Add-AgListenerAndDatabaseDetails {
     try {
         Write-Log -Message "Retrieving AG Listener details for $InstanceName" -Level INFO
         $AGLs = Get-DbaAgListener -SqlInstance $InstanceName -SqlCredential $SqlCredential
-        $listenerDetails = $AGLs | Select-Object AvailabilityGroup, @{Name='ListenerName';Expression={$_.Name}}, ClusterIPConfiguration, PortNumber
+        $listenerDetails = $AGLs | ForEach-Object {
+            # Extract IPs from ClusterIPConfiguration
+            $ipMatches = [regex]::Matches($_.ClusterIPConfiguration, 'IP Address: (\d+\.\d+\.\d+\.\d+)')
+            $ipList = $ipMatches | ForEach-Object { $_.Groups[1].Value }
+            [PSCustomObject]@{
+                AvailabilityGroup = $_.AvailabilityGroup
+                ListenerName = $_.Name
+                ClusterIPConfiguration = $ipList  # Array of IPs
+                PortNumber = $_.PortNumber
+            }
+        }
         Write-Log -Message "Retrieving AG Database details for $InstanceName" -Level INFO
         $AGDBs = Get-DbaAgDatabase -SqlInstance $InstanceName -SqlCredential $SqlCredential
         $groupedDatabases = $AGDBs | Group-Object -Property AvailabilityGroup
@@ -202,6 +212,7 @@ function Add-AgListenerAndDatabaseDetails {
     }
 }
 
+# Function to get Database Mail details
 function Get-DatabaseMailDetails {
     param (
         [Parameter(Mandatory=$true)]
@@ -489,7 +500,6 @@ function Get-ReplicationSubscriptionDetails {
 #######################################################
 ### Main function to generate the As Built Document ###
 #######################################################
-
 function Generate-AsBuiltDoc {
     param (
         [Parameter(Mandatory=$true)]
@@ -572,8 +582,8 @@ function Generate-AsBuiltDoc {
                     'Name' = $_.Name
                     'Issuer' = $_.Issuer
                     'PrivateKeyEncryptionType' = $_.PrivateKeyEncryptionType
-                    'StartDate' = $_.StartDate
-                    'ExpirationDate' = $_.ExpirationDate
+                    'StartDate' = $_.StartDate.ToString("yyyy-MM-dd")
+                    'ExpirationDate' = $_.ExpirationDate.ToString("yyyy-MM-dd")
                 }
             }
         } catch {
@@ -612,6 +622,49 @@ function Generate-AsBuiltDoc {
         # Get replication subscription details
         $subscriptionDetails = Get-ReplicationSubscriptionDetails -InstanceName $instance -SqlCredential $SqlCredential -DistributorDetails $distributorDetails
 
+        # Get system databases' file properties
+        $SystemDbFiles = try {
+            Write-Log -Message "Retrieving system database file information for $instance" -Level INFO
+            Get-DbaDbFile -SqlInstance $instance -Database (Get-DbaDatabase -SqlInstance $instance | Where-Object {$_.IsSystemObject}).Name | ForEach-Object {
+                $sizeMB = [math]::Round($_.Size.Megabyte, 2)
+                $growthValue = if ($_.GrowthType -eq 'Percent') { "$($_.Growth)%" } else { [math]::Round($_.Growth / 1024, 2) }
+                Write-Log -Message "Raw data for $($_.LogicalName): Size = $($_.Size.Megabyte) MB, Growth = $($_.Growth), GrowthType = $($_.GrowthType), Converted Size = $sizeMB MB, Converted Growth = $growthValue" -Level DEBUG
+                @{
+                    'Database' = $_.Database
+                    'File Type' = $_.TypeDescription
+                    'Logical Name' = $_.LogicalName
+                    'Physical Name' = $_.PhysicalName
+                    'Size' = $sizeMB
+                    'Growth' = $growthValue
+                }
+            }
+        }
+        catch {
+            Write-Log -Message "Failed to retrieve system database file information for $instance. Error: $_" -Level ERROR
+            @()
+        }
+
+        # Get user databases' file properties
+        $UserDbFiles = try {
+            Write-Log -Message "Retrieving user database file information for $instance" -Level INFO
+            Get-DbaDbFile -SqlInstance $instance -Database (Get-DbaDatabase -SqlInstance $instance | Where-Object {-not $_.IsSystemObject}).Name | ForEach-Object {
+                $sizeMB = [math]::Round($_.Size.Megabyte, 2)  # Already in MB
+                $growthValue = if ($_.GrowthType -eq 'Percent') { "$($_.Growth)%" } else { [math]::Round($_.Growth / 1024, 2) }  # KB to MB
+                Write-Log -Message "Raw data for $($_.LogicalName): Size = $($_.Size.Megabyte) MB, Growth = $($_.Growth), GrowthType = $($_.GrowthType), Converted Size = $sizeMB MB, Converted Growth = $growthValue" -Level DEBUG
+                @{
+                    'Database' = $_.Database
+                    'File Type' = $_.TypeDescription
+                    'Logical Name' = $_.LogicalName
+                    'Physical Name' = $_.PhysicalName
+                    'Size' = $sizeMB
+                    'Growth' = $growthValue
+                }
+            }
+        }
+        catch {
+            Write-Log -Message "Failed to retrieve user database file information for $instance. Error: $_" -Level ERROR
+            @()
+        }
 
         if ($DocumentFormat -eq "markdown") {
             $documentContent = "h2. SQL Server: $instance @ $(Get-Date -Format 'dd MMMM yyyy')`n"
@@ -620,7 +673,14 @@ function Generate-AsBuiltDoc {
             $documentContent += "`nh3. Host Server Properties`n"
             $documentContent += "|*Property*|*Value*|`n"
             foreach ($property in $hostserver) {
-                $documentContent += "|$($property.Name)|$($property.Value)|`n"
+                if ($property.Name -eq "PhysicalMemory") {
+                    $mbValue = "{0:N0}" -f $property.Value
+                    $gbValue = "{0:N1}" -f ($property.Value / 1024)
+                    $formattedValue = "$mbValue MB / $gbValue GB"
+                    $documentContent += "|$($property.Name)|$formattedValue|`n"
+                } else {
+                    $documentContent += "|$($property.Name)|$($property.Value)|`n"
+                }
             }
 
             # Set SQL Server properties in document
@@ -632,9 +692,13 @@ function Generate-AsBuiltDoc {
 
             # Set disk properties in document
             $documentContent += "`nh3. Disk Properties`n"
-            $documentContent += "|*Name* |*Label*|*Size (GB)*|*Free Space (GB)*|*Block Size (KB)*|`n"
+            $documentContent += "|*Name*|*Label*|*Size (GB)*|*Free Space (GB)*|*Block Size (KB)*|`n"
             foreach ($disk in $DiskInfo) {
-                $documentContent += "|$($disk.'Name') |$($disk.'Label')|$($disk.'Size (GB)')|$($disk.'Free Space (GB)')|$($disk.'Block Size')|`n"
+                $spacedName = "$($disk.'Name') "  # Trailing space for backslash fix
+                $sizeGB = "{0:N1}" -f $disk.'Size (GB)'
+                $freeSpaceGB = "{0:N1}" -f $disk.'Free Space (GB)'
+                $blockSizeKB = "{0:N0}" -f $disk.'Block Size'
+                $documentContent += "|$spacedName|$($disk.'Label')|$sizeGB GB|$freeSpaceGB GB|$blockSizeKB|`n"
             }
 
             # Set service properties in document
@@ -651,25 +715,6 @@ function Generate-AsBuiltDoc {
                 $documentContent += "|$($protocol.'DisplayName')|$($protocol.'Enabled')|$($protocol.'Port')|`n"
             }
 
-            # Get system databases' file properties
-            $SystemDbFiles = try {
-                Write-Log -Message "Retrieving system database file information for $instance" -Level INFO
-                Get-DbaDbFile -SqlInstance $instance -Database (Get-DbaDatabase -SqlInstance $instance | Where-Object {$_.IsSystemObject}).Name | ForEach-Object {
-                    @{
-                        'Database' = $_.Database
-                        'File Type' = $_.TypeDescription
-                        'Logical Name' = $_.LogicalName
-                        'Physical Name' = $_.PhysicalName
-                        'Size' = [math]::Round($_.Size / 1MB, 2)  # Size in MB
-                        'Growth' = if ($_.GrowthType -eq 'Percent') { "$($_.Growth)%" } else { "$($_.Growth) MB" }
-                    }
-                }
-            }
-            catch {
-                Write-Log -Message "Failed to retrieve system database file information for $instance. Error: $_" -Level ERROR
-                @()
-            }
-
             # Set system databases' properties in document
             $documentContent += "`nh3. System Databases`n"
             $orderedPropertiesForSystem = @('Owner', 'RecoveryModel', 'IsAutoCreateStatisticsEnabled', 'LastBackupDate', 'IsReadCommittedSnapshotOn', 'AutoShrink', 'Status', 'SizeMB', 'AutoClose', 'IsAutoUpdateStatisticsEnabled')
@@ -683,36 +728,28 @@ function Generate-AsBuiltDoc {
                 }
             }
 
+            # Set system databases' file properties in document
             $documentContent += "`nh3. System Database File Sizes and Growth`n"
-            $documentContent += "|*Database*|*File Type*|*Logical Name*|*Physical Name*|*Size (MB)*|*Growth*|`n"
+            $documentContent += "|*Database*|*File Type*|*Logical Name*|*Physical Name*|*Size*|*Growth*|`n"
             foreach ($file in $SystemDbFiles) {
-                $documentContent += "|$($file.'Database')|$($file.'File Type')|$($file.'Logical Name')|$($file.'Physical Name')|$($file.'Size')|$($file.'Growth')|`n"
-            }
-
-            # Get user databases' file properties
-            $UserDbFiles = try {
-                Write-Log -Message "Retrieving user database file information for $instance" -Level INFO
-                Get-DbaDbFile -SqlInstance $instance -Database (Get-DbaDatabase -SqlInstance $instance | Where-Object {-not $_.IsSystemObject}).Name | ForEach-Object {
-                    @{
-                        'Database' = $_.Database
-                        'File Type' = $_.TypeDescription
-                        'Logical Name' = $_.LogicalName
-                        'Physical Name' = $_.PhysicalName
-                        'Size' = [math]::Round($_.Size / 1MB, 2)  # Size in MB
-                        'Growth' = if ($_.GrowthType -eq 'Percent') { "$($_.Growth)%" } else { "$($_.Growth) MB" }
+                $sizeMB = $file.'Size'
+                if ($sizeMB -ge 1024) {
+                    $sizeValue = "{0:N1} GB" -f ($sizeMB / 1024)
+                } else {
+                    $sizeValue = "{0:N0} MB" -f $sizeMB
+                }
+                $growthValue = if ($file.'Growth' -match '%') { 
+                    $file.'Growth'
+                } else {
+                    $growthMB = [double]$file.'Growth'
+                    if ($growthMB -ge 1024) {
+                        "{0:N1} GB" -f ($growthMB / 1024)
+                    } else {
+                        "{0:N0} MB" -f $growthMB
                     }
                 }
-            }
-            catch {
-                Write-Log -Message "Failed to retrieve user database file information for $instance. Error: $_" -Level ERROR
-                @()
-            }
-
-            # Set user databases' file properties in document
-            $documentContent += "`nh3. User Database File Sizes and Growth`n"
-            $documentContent += "|*Database*|*File Type*|*Logical Name*|*Physical Name*|*Size (MB)*|*Growth*|`n"
-            foreach ($file in $UserDbFiles) {
-                $documentContent += "|$($file.'Database')|$($file.'File Type')|$($file.'Logical Name')|$($file.'Physical Name')|$($file.'Size')|$($file.'Growth')|`n"
+                $abridgedPhysicalName = $file.'Physical Name' -replace 'Microsoft SQL Server\\MSSQL\d{2}\.MSSQLSERVER\\MSSQL', '...'
+                $documentContent += "|$($file.'Database')|$($file.'File Type')|$($file.'Logical Name')|$abridgedPhysicalName|$sizeValue|$growthValue|`n"
             }
 
             # Set user databases' properties in document
@@ -723,24 +760,58 @@ function Generate-AsBuiltDoc {
                 $documentContent += "|*Property*|*Value*|`n"
                 foreach ($prop in $orderedPropertiesForUser) {
                     if ($db.ContainsKey($prop)) {
-                        $documentContent += "|$prop|$($db[$prop])|`n"
+                        $value = $db[$prop]
+                        # Strip 'Version' from CompatibilityLevel
+                        if ($prop -eq 'CompatibilityLevel') {
+                            $value = $value -replace 'Version', ''
+                        }
+                        $documentContent += "|$prop|$value|`n"
                     }
                 }
             }
 
-            # Set Availability Group properties in document
-            $agDetails = Add-AgListenerAndDatabaseDetails -InstanceName $instance -SqlCredential $SqlCredential
-
-            if ($DocumentFormat -eq "markdown") {
-                # Markdown formatting for Listeners
-                $documentContent += "`nh3. Availability Group Listeners`n"
-                $documentContent += "|*AvailabilityGroup*|*ListenerName*|*ClusterIPConfiguration*|*PortNumber*|`n"
-                foreach ($listener in $agDetails.Listeners) {
-                    $documentContent += "|$($listener.AvailabilityGroup)|$($listener.ListenerName)|$($listener.ClusterIPConfiguration)|$($listener.PortNumber)|`n"
+            # Set user databases' file properties in document
+            $documentContent += "`nh3. User Database File Sizes and Growth`n"
+            $documentContent += "|*Database*|*File Type*|*Logical Name*|*Physical Name*|*Size*|*Growth*|`n"
+            foreach ($file in $UserDbFiles) {
+                # Format Size with commas and appropriate unit
+                $sizeMB = $file.'Size'
+                if ($sizeMB -ge 1024) {
+                    $sizeValue = "{0:N1} GB" -f ($sizeMB / 1024)
+                } else {
+                    $sizeValue = "{0:N0} MB" -f $sizeMB
                 }
 
-                # Markdown formatting for Databases
-                $documentContent += "`nh3. Availability Group Databases`n"
+                # Format Growth with commas and appropriate unit
+                $growthValue = if ($file.'Growth' -match '%') { 
+                    $file.'Growth'  # Keep percentage as is
+                } else {
+                    $growthMB = [double]$file.'Growth'
+                    if ($growthMB -ge 1024) {
+                        "{0:N1} GB" -f ($growthMB / 1024)
+                    } else {
+                        "{0:N0} MB" -f $growthMB
+                    }
+                }
+
+                $documentContent += "|$($file.'Database')|$($file.'Logical Name')|$($file.'File Type')|$($file.'Physical Name')|$sizeValue|$growthValue|`n"
+            }
+
+            # Set Availability Group properties in document
+            $agDetails = Add-AgListenerAndDatabaseDetails -InstanceName $instance -SqlCredential $SqlCredential
+            $documentContent += "`nh3. Availability Group Listeners`n"
+            if ($agDetails.Listeners) {
+                $documentContent += "|*AvailabilityGroup*|*ListenerName*|*ClusterIPConfiguration*|*PortNumber*|`n"
+                foreach ($listener in $agDetails.Listeners) {
+                    $ipString = $listener.ClusterIPConfiguration -join ', '  # Join IPs with comma and space
+                    $documentContent += "|$($listener.AvailabilityGroup)|$($listener.ListenerName)|$ipString|$($listener.PortNumber)|`n"
+                }
+            } else {
+                $documentContent += "No Availability Group listeners detected on this instance.`n"
+            }
+
+            $documentContent += "`nh3. Availability Group Databases`n"
+            if ($agDetails.Databases) {
                 $documentContent += "|*AvailabilityGroup*|*Databases*|*LocalReplicaRole*|*SynchronizationState*|`n"
                 foreach ($group in $agDetails.Databases) {
                     $databasesList = ($group.Group | Sort-Object -Property Name | ForEach-Object { $_.Name }) -join ", "
@@ -748,28 +819,40 @@ function Generate-AsBuiltDoc {
                     $documentContent += "|$($group.Name)|$databasesList|$($sampleDb.LocalReplicaRole)|$($sampleDb.SynchronizationState)|`n"
                 }
             } else {
-                Write-Log -Message "Document format $DocumentFormat not implemented for AG details yet." -Level WARNING
+                $documentContent += "No Availability Group databases detected on this instance.`n"
             }
 
             # Set Endpoint properties in document
             $documentContent += "`nh3. Endpoints`n"
-            $documentContent += "|*Endpoint Type*|*Owner*|*Protocol Type*|*Name*|*Port*|`n"
-            foreach ($Endpoint in $EndpointProperties) {
-                $documentContent += "|$($Endpoint.EndpointType)|$($Endpoint.Owner)|$($Endpoint.ProtocolType)|$($Endpoint.Name)|$($Endpoint.Port)|`n"
+            if ($EndpointProperties) {
+                $documentContent += "|*Endpoint Type*|*Owner*|*Protocol Type*|*Name*|*Port*|`n"
+                foreach ($Endpoint in $EndpointProperties) {
+                    $documentContent += "|$($Endpoint.EndpointType)|$($Endpoint.Owner)|$($Endpoint.ProtocolType)|$($Endpoint.Name)|$($Endpoint.Port)|`n"
+                }
+            } else {
+                $documentContent += "No endpoints detected on this instance.`n"
             }
 
             # Set Certificate properties in document
             $documentContent += "`nh3. Database Certificates`n"
-            $documentContent += "|*Database*|*Name*|*Issuer*|*PrivateKeyEncryptionType*|*Start Date*|*Expiration Date*|`n"
-            foreach ($DatabaseCertificate in $DatabaseCertificates) {
-                $documentContent += "|$($DatabaseCertificate.Database)|$($DatabaseCertificate.Name)|$($DatabaseCertificate.Issuer)|$($DatabaseCertificate.PrivateKeyEncryptionType)|$($DatabaseCertificate.StartDate)|$($DatabaseCertificate.ExpirationDate)|`n"
+            if ($DatabaseCertificates) {
+                $documentContent += "|*Database*|*Name*|*Issuer*|*PrivateKeyEncryptionType*|*Start Date*|*Expiration Date*|`n"
+                foreach ($DatabaseCertificate in $DatabaseCertificates) {
+                    $documentContent += "|$($DatabaseCertificate.Database)|$($DatabaseCertificate.Name)|$($DatabaseCertificate.Issuer)|$($DatabaseCertificate.PrivateKeyEncryptionType)|$($DatabaseCertificate.StartDate)|$($DatabaseCertificate.ExpirationDate)|`n"
+                }
+            } else {
+                $documentContent += "No database certificates detected on this instance.`n"
             }
 
             # Set Linked Server properties in document
             $documentContent += "`nh3. Linked Servers`n"
-            $documentContent += "|*Linked Server Name*|*Product Name*|*Provider Name*|*Data Source*|*Impersonate*|*RpcOut*|`n"
-            foreach ($server in $LinkedServers) {
-                $documentContent += "|$($server.'Linked Server Name')|$($server.'Product Name')|$($server.'Provider Name')|$($server.'Data Source')|$($server.'Impersonate')|$($server.'RpcOut')|`n"
+            if ($LinkedServers) {
+                $documentContent += "|*Linked Server Name*|*Product Name*|*Provider Name*|*Data Source*|*Impersonate*|*RpcOut*|`n"
+                foreach ($server in $LinkedServers) {
+                    $documentContent += "|$($server.'Linked Server Name')|$($server.'Product Name')|$($server.'Provider Name')|$($server.'Data Source')|$($server.'Impersonate')|$($server.'RpcOut')|`n"
+                }
+            } else {
+                $documentContent += "No linked servers detected on this instance.`n"
             }
 
             # Set Database Mail properties in document
@@ -821,7 +904,7 @@ function Generate-AsBuiltDoc {
                     $documentContent += "No mail servers configured.`n"
                 }
 
-                # Mail Configuration Settings (unchanged, as it’s less likely to have blank values)
+                # Mail Configuration Settings
                 $documentContent += "`nh4. Mail Configuration Settings`n"
                 if ($mailDetails.Config) {
                     $documentContent += "|*Name*|*Value*|`n"
@@ -838,12 +921,12 @@ function Generate-AsBuiltDoc {
 
             # Set Replication Publisher properties in document
             $documentContent += "`nh3. Replication Publisher Configuration`n"
-            Write-Log -Message "PublisherDetails count before check: $($publisherDetails.Count)" -Level DEBUG
             if ($publisherDetails) {
                 Write-Log -Message "Adding publisher table with $($publisherDetails.Count) entries" -Level DEBUG
                 $documentContent += "|*Publication Name*|*Database*|*Default Snapshot Folder*|*Alternate Snapshot Folder*|`n"
                 foreach ($pub in $publisherDetails) {
-                    $documentContent += "|$($pub.PublicationName)|$($pub.Database)|$($pub.DefaultSnapshotFolder)|$($pub.AlternateSnapshotFolder)|`n"
+                    $alternateSnapshotFolder = "$($pub.AlternateSnapshotFolder) "  # Add trailing space
+                    $documentContent += "|$($pub.PublicationName)|$($pub.Database)|$($pub.DefaultSnapshotFolder)|$alternateSnapshotFolder|`n"
                 }
             } else {
                 Write-Log -Message "No publisher details to display" -Level DEBUG
@@ -865,7 +948,7 @@ function Generate-AsBuiltDoc {
 
             # Set Replication Subscription properties in document
             $documentContent += "`nh3. Replication Subscription Configuration`n"
-            if ($subscriptionDetails) {
+            if ($subscriptionDetails -and $subscriptionDetails.Subscriptions) {
                 Write-Log -Message "Adding subscription table with details" -Level DEBUG
                 $documentContent += "|*Publisher*|*Publication*|*Subscription Type*|*Database Name*|*Subscription DB Name*|`n"
                 foreach ($sub in $subscriptionDetails.Subscriptions) {
