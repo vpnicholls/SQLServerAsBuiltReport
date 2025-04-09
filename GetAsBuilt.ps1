@@ -182,20 +182,25 @@ function Add-AgListenerAndDatabaseDetails {
     )
     try {
         Write-Log -Message "Retrieving AG Listener details for $InstanceName" -Level INFO
-        $AGLs = Get-DbaAgListener -SqlInstance $InstanceName -SqlCredential $SqlCredential
+        $AGLs = Get-DbaAgListener -SqlInstance $InstanceName -SqlCredential $SqlCredential -WarningAction SilentlyContinue
+        if (-not $AGLs) {
+            Write-Log -Message "No Availability Group listeners detected on $InstanceName" -Level INFO
+        }
         $listenerDetails = $AGLs | ForEach-Object {
-            # Extract IPs from ClusterIPConfiguration
             $ipMatches = [regex]::Matches($_.ClusterIPConfiguration, 'IP Address: (\d+\.\d+\.\d+\.\d+)')
             $ipList = $ipMatches | ForEach-Object { $_.Groups[1].Value }
             [PSCustomObject]@{
                 AvailabilityGroup = $_.AvailabilityGroup
                 ListenerName = $_.Name
-                ClusterIPConfiguration = $ipList  # Array of IPs
+                ClusterIPConfiguration = $ipList
                 PortNumber = $_.PortNumber
             }
         }
         Write-Log -Message "Retrieving AG Database details for $InstanceName" -Level INFO
-        $AGDBs = Get-DbaAgDatabase -SqlInstance $InstanceName -SqlCredential $SqlCredential
+        $AGDBs = Get-DbaAgDatabase -SqlInstance $InstanceName -SqlCredential $SqlCredential -WarningAction SilentlyContinue
+        if (-not $AGDBs -and -not $AGLs) {
+            Write-Log -Message "Availability Groups (HADR) not configured for $InstanceName" -Level INFO
+        }
         $groupedDatabases = $AGDBs | Group-Object -Property AvailabilityGroup
         $details = @{
             'Listeners' = $listenerDetails
