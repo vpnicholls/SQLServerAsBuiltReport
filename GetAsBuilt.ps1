@@ -139,13 +139,16 @@ function Get-SQLDatabases {
         $userDatabases = $databases | Where-Object { -not $_.IsSystemObject }
         function Get-DatabaseDetails {
             param ($db)
-            $dbFiles = Get-DbaDbFile -SqlInstance $InstanceName -Database $db.Name
+            $dbFiles = Get-DbaDbFile -SqlInstance $InstanceName -Database $db.Name -WarningAction SilentlyContinue
+            if (-not $dbFiles) {
+                Write-Log -Message "Database '$($db.Name)' on $InstanceName is not readable (likely an AG secondary)" -Level INFO
+            }
             $totalSizeBytes = ($dbFiles | Measure-Object -Property Size -Sum).Sum
             return @{
                 'Name' = $db.Name
                 'Status' = $db.Status
                 'RecoveryModel' = $db.RecoveryModel
-                'CompatibilityLevel' = $db.Compatibility -replace 'Version',''  # Remove "Version" from the value
+                'CompatibilityLevel' = $db.Compatibility -replace 'Version',''
                 'Owner' = $db.Owner
                 'CreationDate' = $db.CreateDate.ToString("yyyy-MM-dd HH:mm:ss")
                 'LastBackupDate' = if ($db.Name -eq 'tempdb') { "N/A " } elseif ($db.LastBackupDate) { $db.LastBackupDate.ToString("yyyy-MM-dd HH:mm:ss") } else { "Never" }
@@ -779,31 +782,30 @@ function Generate-AsBuiltDoc {
                 }
             }
 
-            # Set user databases' file properties in document
             $documentContent += "`nh3. User Database File Sizes and Growth`n"
-            $documentContent += "|*Database*|*File Type*|*Logical Name*|*Physical Name*|*Size*|*Growth*|`n"
-            foreach ($file in $UserDbFiles) {
-                # Format Size with commas and appropriate unit
-                $sizeMB = $file.'Size'
-                if ($sizeMB -ge 1024) {
-                    $sizeValue = "{0:N1} GB" -f ($sizeMB / 1024)
-                } else {
-                    $sizeValue = "{0:N0} MB" -f $sizeMB
-                }
-
-                # Format Growth with commas and appropriate unit
-                $growthValue = if ($file.'Growth' -match '%') { 
-                    $file.'Growth'  # Keep percentage as is
-                } else {
-                    $growthMB = [double]$file.'Growth'
-                    if ($growthMB -ge 1024) {
-                        "{0:N1} GB" -f ($growthMB / 1024)
+            if ($UserDbFiles) {
+                $documentContent += "|*Database*|*File Type*|*Logical Name*|*Physical Name*|*Size*|*Growth*|`n"
+                foreach ($file in $UserDbFiles) {
+                    $sizeMB = $file.'Size'
+                    if ($sizeMB -ge 1024) {
+                        $sizeValue = "{0:N1} GB" -f ($sizeMB / 1024)
                     } else {
-                        "{0:N0} MB" -f $growthMB
+                        $sizeValue = "{0:N0} MB" -f $sizeMB
                     }
+                    $growthValue = if ($file.'Growth' -match '%') { 
+                        $file.'Growth'
+                    } else {
+                        $growthMB = [double]$file.'Growth'
+                        if ($growthMB -ge 1024) {
+                            "{0:N1} GB" -f ($growthMB / 1024)
+                        } else {
+                            "{0:N0} MB" -f $growthMB
+                        }
+                    }
+                    $documentContent += "|$($file.'Database')|$($file.'File Type')|$($file.'Logical Name')|$($file.'Physical Name')|$sizeValue|$growthValue|`n"
                 }
-
-                $documentContent += "|$($file.'Database')|$($file.'Logical Name')|$($file.'File Type')|$($file.'Physical Name')|$sizeValue|$growthValue|`n"
+            } else {
+                $documentContent += "No readable user database configuration detected on this instance. Refer to the primary database for these details.`n"
             }
 
             # Set Availability Group properties in document
