@@ -113,7 +113,7 @@ function Get-SQLServerConfig {
         Write-Log -Message "Retrieving configuration for $InstanceName" -Level INFO
         $serverInfo = Get-DbaInstanceProperty -SqlInstance $InstanceName -ErrorAction Stop
         $config = @{}
-        @('VersionString', 'Edition', 'Collation', 'IsClustered') | ForEach-Object {
+        @('VersionString', 'Edition', 'Collation') | ForEach-Object {
             $property = $_
             $value = ($serverInfo | Where-Object { $_.Name -eq $property } | Select-Object -ExpandProperty Value -ErrorAction SilentlyContinue)
             if ($value) { $config[$property] = $value } else { Write-Log -Message "Property $property not found for $InstanceName" -Level WARNING }
