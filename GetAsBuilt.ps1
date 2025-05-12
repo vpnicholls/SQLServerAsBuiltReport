@@ -104,6 +104,7 @@ Function Get-HostServerProperties {
 }
 
 # Define function to get server configuration using dbatools
+# Define function to get server configuration using dbatools
 function Get-SQLServerConfig {
     param (
         [Parameter(Mandatory=$true)]
@@ -111,13 +112,55 @@ function Get-SQLServerConfig {
     )
     try {
         Write-Log -Message "Retrieving configuration for $InstanceName" -Level INFO
-        $serverInfo = Get-DbaInstanceProperty -SqlInstance $InstanceName -ErrorAction Stop
+        
+        # Initialize configuration hashtable
         $config = @{}
-        @('VersionString', 'Edition', 'Collation') | ForEach-Object {
+
+        # Get properties from Get-DbaInstanceProperty
+        $serverInfo = Get-DbaInstanceProperty -SqlInstance $InstanceName -ErrorAction Stop
+        @('VersionString', 'Edition', 'Collation', 'Language', 'IsFullTextInstalled', 'IsHADREnabled', 'LoginMode') | ForEach-Object {
             $property = $_
             $value = ($serverInfo | Where-Object { $_.Name -eq $property } | Select-Object -ExpandProperty Value -ErrorAction SilentlyContinue)
-            if ($value) { $config[$property] = $value } else { Write-Log -Message "Property $property not found for $InstanceName" -Level WARNING }
+            if ($null -ne $value) { 
+                $config[$property] = $value 
+            } else { 
+                Write-Log -Message "Property $property not found for $InstanceName" -Level WARNING 
+            }
         }
+
+        # Get properties from Get-DbaSpConfigure
+        $spConfig = Get-DbaSpConfigure -SqlInstance $InstanceName -ErrorAction Stop | 
+            Where-Object { $_.DisplayName -in @(
+                "backup checksum default", 
+                "backup compression default", 
+                "blocked process threshold (s)", 
+                "max server memory (MB)", 
+                "min server memory (MB)", 
+                "max degree of parallelism", 
+                "cost threshold for parallelism"
+            )} | Sort-Object DisplayName
+
+        # Map DisplayName to user-friendly property names and add to config
+        foreach ($item in $spConfig) {
+            $propertyName = switch ($item.DisplayName) {
+                "backup checksum default" { "Backup Checksum Default" }
+                "backup compression default" { "Backup Compression Default" }
+                "blocked process threshold (s)" { "Blocked Process Threshold (s)" }
+                "max server memory (MB)" { "Max Server Memory (MB)" }
+                "min server memory (MB)" { "Min Server Memory (MB)" }
+                "max degree of parallelism" { "Max Degree of Parallelism" }
+                "cost threshold for parallelism" { "Cost Threshold for Parallelism" }
+                default { $item.DisplayName }
+            }
+            # Format boolean values as Yes/No for consistency
+            $value = if ($item.DisplayName -in @("backup checksum default", "backup compression default")) {
+                if ($item.ConfiguredValue -eq 1) { "Yes" } else { "No" }
+            } else {
+                $item.ConfiguredValue
+            }
+            $config[$propertyName] = $value
+        }
+
         return $config
     }
     catch {
@@ -711,7 +754,7 @@ function Generate-AsBuiltDoc {
             # Set SQL Server properties in document
             $documentContent += "`nh3. SQL Server Instance Properties`n"
             $documentContent += "|*Property*|*Value*|`n"
-            foreach ($key in $config.Keys) {
+            foreach ($key in ($config.Keys | Sort-Object)) {
                 $documentContent += "|$key|$($config[$key])|`n"
             }
 
