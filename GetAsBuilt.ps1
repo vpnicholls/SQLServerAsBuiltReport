@@ -104,7 +104,6 @@ Function Get-HostServerProperties {
 }
 
 # Define function to get server configuration using dbatools
-# Define function to get server configuration using dbatools
 function Get-SQLServerConfig {
     param (
         [Parameter(Mandatory=$true)]
@@ -580,7 +579,7 @@ function Generate-AsBuiltDoc {
                 'Label' = if ($_.Name -eq 'C:\' -and [string]::IsNullOrEmpty($_.Label)) { 'OS' } else { $_.Label }
                 'Size (GB)' = [math]::Round($_.Capacity / 1GB, 2)
                 'Free Space (GB)' = [math]::Round($_.FreeSpace / 1GB, 2)
-                'Block Size' = $_.BlockSize
+                'Block Size' = ($_.BlockSize/1024)
             }
             $diskData
         }
