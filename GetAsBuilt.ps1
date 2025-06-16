@@ -738,7 +738,7 @@ function Generate-AsBuiltDoc {
 
             # Set host server properties in document
             $documentContent += "`nh3. Host Server Properties`n"
-            $documentContent += "|*Property*|*Value*|`n"
+            $documentContent += "|Property|Value|`n"
             foreach ($property in $hostserver) {
                 if ($property.Name -eq "PhysicalMemory") {
                     $mbValue = "{0:N0}" -f $property.Value
@@ -752,14 +752,14 @@ function Generate-AsBuiltDoc {
 
             # Set SQL Server properties in document
             $documentContent += "`nh3. SQL Server Instance Properties`n"
-            $documentContent += "|*Property*|*Value*|`n"
+            $documentContent += "|Property|Value|`n"
             foreach ($key in ($config.Keys | Sort-Object)) {
                 $documentContent += "|$key|$($config[$key])|`n"
             }
 
             # Set disk properties in document
             $documentContent += "`nh3. Disk Properties`n"
-            $documentContent += "|*Name*|*Label*|*Size (GB)*|*Free Space (GB)*|*Block Size (KB)*|`n"
+            $documentContent += "|Name|Label|Size (GB)|Free Space (GB)|Block Size (KB)|`n"
             foreach ($disk in $DiskInfo) {
                 $spacedName = "$($disk.'Name') "  # Trailing space for backslash fix
                 $sizeGB = "{0:N1}" -f $disk.'Size (GB)'
@@ -770,14 +770,14 @@ function Generate-AsBuiltDoc {
 
             # Set service properties in document
             $documentContent += "`nh3. Services Properties`n"
-            $documentContent += "|*Service Name*|*Display Name*|*Service Account*|*Start Mode*|*State*|`n"
+            $documentContent += "|Service Name|Display Name|Service Account|Start Mode|State|`n"
             foreach ($Service in $ServicesInfo) {
                 $documentContent += "|$($Service.'Service Name')|$($Service.'Display Name')|$($Service.'Service Account')|$($Service.'Start Mode')|$($Service.'State')|`n"
             }
 
             # Set network protocols in document
             $documentContent += "`nh3. Network Protocols`n"
-            $documentContent += "|*Name*|*Enabled*|*Port*|`n"
+            $documentContent += "|Name|Enabled|Port|`n"
             foreach ($protocol in $NetworkProtocols) {
                 $documentContent += "|$($protocol.'DisplayName')|$($protocol.'Enabled')|$($protocol.'Port')|`n"
             }
@@ -787,7 +787,7 @@ function Generate-AsBuiltDoc {
             $orderedPropertiesForSystem = @('Owner', 'RecoveryModel', 'IsAutoCreateStatisticsEnabled', 'LastBackupDate', 'IsReadCommittedSnapshotOn', 'AutoShrink', 'Status', 'SizeMB', 'AutoClose', 'IsAutoUpdateStatisticsEnabled')
             foreach ($db in $databases.SystemDatabases) {
                 $documentContent += "`nh4. $($db.Name)`n"
-                $documentContent += "|*Property*|*Value*|`n"
+                $documentContent += "|Property|Value|`n"
                 foreach ($prop in $orderedPropertiesForSystem) {
                     if ($db.ContainsKey($prop)) {
                         $documentContent += "|$prop|$($db[$prop])|`n"
@@ -797,7 +797,7 @@ function Generate-AsBuiltDoc {
 
             # Set system databases' file properties in document
             $documentContent += "`nh3. System Database File Sizes and Growth`n"
-            $documentContent += "|*Database*|*File Type*|*Logical Name*|*Physical Name*|*Size*|*Growth*|`n"
+            $documentContent += "|Database|File Type|Logical Name|Physical Name|Size|Growth|`n"
             foreach ($file in $SystemDbFiles) {
                 $sizeMB = $file.'Size'
                 if ($sizeMB -ge 1024) {
@@ -824,7 +824,7 @@ function Generate-AsBuiltDoc {
             $orderedPropertiesForUser = @('Owner', 'RecoveryModel', 'IsAutoCreateStatisticsEnabled', 'LastBackupDate', 'IsReadCommittedSnapshotOn', 'AutoShrink', 'Status', 'SizeMB', 'CreationDate', 'AutoClose', 'CompatibilityLevel', 'IsAutoUpdateStatisticsEnabled')
             foreach ($db in $databases.UserDatabases) {
                 $documentContent += "`nh4. $($db.Name)`n"
-                $documentContent += "|*Property*|*Value*|`n"
+                $documentContent += "|Property|Value|`n"
                 foreach ($prop in $orderedPropertiesForUser) {
                     if ($db.ContainsKey($prop)) {
                         $value = $db[$prop]
@@ -839,7 +839,7 @@ function Generate-AsBuiltDoc {
 
             $documentContent += "`nh3. User Database File Sizes and Growth`n"
             if ($UserDbFiles) {
-                $documentContent += "|*Database*|*File Type*|*Logical Name*|*Physical Name*|*Size*|*Growth*|`n"
+                $documentContent += "|Database|File Type|Logical Name|Physical Name|Size|Growth|`n"
                 foreach ($file in $UserDbFiles) {
                     $sizeMB = $file.'Size'
                     if ($sizeMB -ge 1024) {
@@ -867,7 +867,7 @@ function Generate-AsBuiltDoc {
             $agDetails = Add-AgListenerAndDatabaseDetails -InstanceName $instance -SqlCredential $SqlCredential
             $documentContent += "`nh3. Availability Group Listeners`n"
             if ($agDetails.Listeners) {
-                $documentContent += "|*AvailabilityGroup*|*ListenerName*|*ClusterIPConfiguration*|*PortNumber*|`n"
+                $documentContent += "|AvailabilityGroup|ListenerName|ClusterIPConfiguration|PortNumber|`n"
                 foreach ($listener in $agDetails.Listeners) {
                     $ipString = $listener.ClusterIPConfiguration -join ', '  # Join IPs with comma and space
                     $documentContent += "|$($listener.AvailabilityGroup)|$($listener.ListenerName)|$ipString|$($listener.PortNumber)|`n"
@@ -878,7 +878,7 @@ function Generate-AsBuiltDoc {
 
             $documentContent += "`nh3. Availability Group Databases`n"
             if ($agDetails.Databases) {
-                $documentContent += "|*AvailabilityGroup*|*Databases*|*LocalReplicaRole*|*SynchronizationState*|`n"
+                $documentContent += "|AvailabilityGroup|Databases|LocalReplicaRole|SynchronizationState|`n"
                 foreach ($group in $agDetails.Databases) {
                     $databasesList = ($group.Group | Sort-Object -Property Name | ForEach-Object { $_.Name }) -join ", "
                     $sampleDb = $group.Group | Select-Object -First 1
@@ -891,7 +891,7 @@ function Generate-AsBuiltDoc {
             # Set Endpoint properties in document
             $documentContent += "`nh3. Endpoints`n"
             if ($EndpointProperties) {
-                $documentContent += "|*Endpoint Type*|*Owner*|*Protocol Type*|*Name*|*Port*|`n"
+                $documentContent += "|Endpoint Type|Owner|Protocol Type|Name|Port|`n"
                 foreach ($Endpoint in $EndpointProperties) {
                     $documentContent += "|$($Endpoint.EndpointType)|$($Endpoint.Owner)|$($Endpoint.ProtocolType)|$($Endpoint.Name)|$($Endpoint.Port)|`n"
                 }
@@ -902,7 +902,7 @@ function Generate-AsBuiltDoc {
             # Set Certificate properties in document
             $documentContent += "`nh3. Database Certificates`n"
             if ($DatabaseCertificates) {
-                $documentContent += "|*Database*|*Name*|*Issuer*|*PrivateKeyEncryptionType*|*Start Date*|*Expiration Date*|`n"
+                $documentContent += "|Database|Name|Issuer|PrivateKeyEncryptionType|Start Date|Expiration Date|`n"
                 foreach ($DatabaseCertificate in $DatabaseCertificates) {
                     $documentContent += "|$($DatabaseCertificate.Database)|$($DatabaseCertificate.Name)|$($DatabaseCertificate.Issuer)|$($DatabaseCertificate.PrivateKeyEncryptionType)|$($DatabaseCertificate.StartDate)|$($DatabaseCertificate.ExpirationDate)|`n"
                 }
@@ -913,7 +913,7 @@ function Generate-AsBuiltDoc {
             # Set Linked Server properties in document
             $documentContent += "`nh3. Linked Servers`n"
             if ($LinkedServers) {
-                $documentContent += "|*Linked Server Name*|*Product Name*|*Provider Name*|*Data Source*|*Impersonate*|*RpcOut*|`n"
+                $documentContent += "|Linked Server Name|Product Name|Provider Name|Data Source|Impersonate|RpcOut|`n"
                 foreach ($server in $LinkedServers) {
                     $documentContent += "|$($server.'Linked Server Name')|$($server.'Product Name')|$($server.'Provider Name')|$($server.'Data Source')|$($server.'Impersonate')|$($server.'RpcOut')|`n"
                 }
@@ -927,7 +927,7 @@ function Generate-AsBuiltDoc {
                 # Mail Accounts
                 $documentContent += "`nh4. Mail Accounts`n"
                 if ($mailDetails.Accounts) {
-                    $documentContent += "|*Name*|*Email Address*|*Display Name*|*Reply-To Address*|*SMTP Server*|`n"
+                    $documentContent += "|Name|Email Address|Display Name|Reply-To Address|SMTP Server|`n"
                     foreach ($account in $mailDetails.Accounts) {
                         $name = if ([string]::IsNullOrEmpty($account.Name)) { "N/A " } else { $account.Name }
                         $email = if ([string]::IsNullOrEmpty($account.EmailAddress)) { "N/A " } else { $account.EmailAddress }
@@ -943,7 +943,7 @@ function Generate-AsBuiltDoc {
                 # Mail Profiles
                 $documentContent += "`nh4. Mail Profiles`n"
                 if ($mailDetails.Profiles) {
-                    $documentContent += "|*Name*|*Description*|*Is Default*|`n"
+                    $documentContent += "|Name|Description|Is Default|`n"
                     foreach ($profile in $mailDetails.Profiles) {
                         $name = if ([string]::IsNullOrEmpty($profile.Name)) { "N/A " } else { $profile.Name }
                         $description = if ([string]::IsNullOrEmpty($profile.Description)) { "N/A " } else { $profile.Description }
@@ -957,7 +957,7 @@ function Generate-AsBuiltDoc {
                 # Mail Servers
                 $documentContent += "`nh4. Mail Servers`n"
                 if ($mailDetails.Servers) {
-                    $documentContent += "|*Account Name*|*Server Name*|*Port*|*Enable SSL*|*Authentication Type*|`n"
+                    $documentContent += "|Account Name|Server Name|Port|Enable SSL|Authentication Type|`n"
                     foreach ($server in $mailDetails.Servers) {
                         $accountName = if ([string]::IsNullOrEmpty($server.AccountName)) { "N/A " } else { $server.AccountName }
                         $serverName = if ([string]::IsNullOrEmpty($server.ServerName)) { "N/A " } else { $server.ServerName }
@@ -973,7 +973,7 @@ function Generate-AsBuiltDoc {
                 # Mail Configuration Settings
                 $documentContent += "`nh4. Mail Configuration Settings`n"
                 if ($mailDetails.Config) {
-                    $documentContent += "|*Name*|*Value*|`n"
+                    $documentContent += "|Name|Value|`n"
                     foreach ($config in $mailDetails.Config) {
                         $documentContent += "|$($config.Name)|$($config.Value)|`n"
                     }
@@ -989,7 +989,7 @@ function Generate-AsBuiltDoc {
             $documentContent += "`nh3. Replication Publisher Configuration`n"
             if ($publisherDetails) {
                 Write-Log -Message "Adding publisher table with $($publisherDetails.Count) entries" -Level DEBUG
-                $documentContent += "|*Publication Name*|*Database*|*Default Snapshot Folder*|*Alternate Snapshot Folder*|`n"
+                $documentContent += "|Publication Name|Database|Default Snapshot Folder|Alternate Snapshot Folder|`n"
                 foreach ($pub in $publisherDetails) {
                     $alternateSnapshotFolder = "$($pub.AlternateSnapshotFolder) "  # Add trailing space
                     $documentContent += "|$($pub.PublicationName)|$($pub.Database)|$($pub.DefaultSnapshotFolder)|$alternateSnapshotFolder|`n"
@@ -1003,7 +1003,7 @@ function Generate-AsBuiltDoc {
             $documentContent += "`nh3. Replication Distributor Configuration`n"
             if ($distributorDetails) {
                 Write-Log -Message "Adding distributor table with details" -Level DEBUG
-                $documentContent += "|*Publisher*|*Publication*|`n"
+                $documentContent += "|Publisher|Publication|`n"
                 foreach ($pub in $distributorDetails.Publishers) {
                     $documentContent += "|$($pub.PublisherName)|$($pub.PublicationName)|`n"
                 }
@@ -1016,7 +1016,7 @@ function Generate-AsBuiltDoc {
             $documentContent += "`nh3. Replication Subscription Configuration`n"
             if ($subscriptionDetails -and $subscriptionDetails.Subscriptions) {
                 Write-Log -Message "Adding subscription table with details" -Level DEBUG
-                $documentContent += "|*Publisher*|*Publication*|*Subscription Type*|*Database Name*|*Subscription DB Name*|`n"
+                $documentContent += "|Publisher|Publication|Subscription Type|Database Name|Subscription DB Name|`n"
                 foreach ($sub in $subscriptionDetails.Subscriptions) {
                     $documentContent += "|$($sub.PublisherName)|$($sub.PublicationName)|$($sub.SubscriptionType)|$($sub.DatabaseName)|$($sub.SubscriptionDBName)|`n"
                 }
