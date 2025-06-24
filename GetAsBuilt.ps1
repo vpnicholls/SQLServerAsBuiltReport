@@ -110,25 +110,25 @@ function Get-SQLServerConfig {
         [string]$InstanceName
     )
     try {
-        Write-Log -Message "Retrieving configuration for $InstanceName" -Level INFO
+        Write-Log -Message "Retrieving configuration for ${InstanceName}" -Level INFO
         
         # Initialize configuration hashtable
         $config = @{}
 
         # Get properties from Get-DbaInstanceProperty
-        $serverInfo = Get-DbaInstanceProperty -SqlInstance $InstanceName -ErrorAction Stop
+        $serverInfo = Get-DbaInstanceProperty -SqlInstance ${InstanceName} -ErrorAction Stop
         @('VersionString', 'Edition', 'Collation', 'Language', 'IsFullTextInstalled', 'IsHADREnabled', 'LoginMode') | ForEach-Object {
             $property = $_
             $value = ($serverInfo | Where-Object { $_.Name -eq $property } | Select-Object -ExpandProperty Value -ErrorAction SilentlyContinue)
             if ($null -ne $value) { 
                 $config[$property] = $value 
             } else { 
-                Write-Log -Message "Property $property not found for $InstanceName" -Level WARNING 
+                Write-Log -Message "Property $property not found for ${InstanceName}" -Level WARNING 
             }
         }
 
         # Get properties from Get-DbaSpConfigure
-        $spConfig = Get-DbaSpConfigure -SqlInstance $InstanceName -ErrorAction Stop | 
+        $spConfig = Get-DbaSpConfigure -SqlInstance ${InstanceName} -ErrorAction Stop | 
             Where-Object { $_.DisplayName -in @(
                 "backup checksum default", 
                 "backup compression default", 
@@ -160,10 +160,31 @@ function Get-SQLServerConfig {
             $config[$propertyName] = $value
         }
 
+        # Get 'sa' login details using Invoke-DbaQuery
+        $saQuery = @"
+        SELECT [name] AS SaLoginName, 
+               CASE WHEN [is_disabled] = 1 THEN 'Disabled' ELSE 'Enabled' END AS SaLoginStatus
+        FROM [master].[sys].[server_principals]
+        WHERE [sid] = 0x01;
+"@
+        $saDetails = Invoke-DbaQuery -SqlInstance ${InstanceName} -Database master -Query $saQuery -ErrorAction Stop
+
+        if ($saDetails) {
+            # Determine if 'sa' has been renamed
+            $saName = if ($saDetails.SaLoginName -eq 'sa') { 'N/A' } else { $saDetails.SaLoginName }
+            $config["Renamed 'sa' Login"] = $saName
+            $config["Status of 'sa' Login"] = $saDetails.SaLoginStatus
+            Write-Log -Message "Retrieved 'sa' login details for ${InstanceName}: Name=${saName}, Status=$($saDetails.SaLoginStatus)" -Level DEBUG
+        } else {
+            Write-Log -Message "No 'sa' login details found for ${InstanceName}" -Level WARNING
+            $config["Renamed 'sa' Login"] = 'N/A'
+            $config["Status of 'sa' Login"] = 'N/A'
+        }
+
         return $config
     }
     catch {
-        Write-Log -Message "Failed to retrieve configuration for $InstanceName. Error: $_" -Level ERROR
+        Write-Log -Message "Failed to retrieve configuration for ${InstanceName}. Error: $_" -Level ERROR
         return $null
     }
 }
